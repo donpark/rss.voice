@@ -10,6 +10,12 @@ npx wrangler d1 migrations apply rss-voice --local --config apps/server/wrangler
 npx wrangler dev --local --config apps/server/wrangler.toml
 ```
 
+Copy `.dev.vars.example` to `.dev.vars` when testing mail or S3-compatible media locally. `.dev.vars` is ignored by git. Run the integration smoke test against a local Worker with:
+
+```sh
+TEST_SERVER_URL=http://127.0.0.1:8787 npm --workspace @rss-voice/server run test:integration
+```
+
 The current slice exposes `/health`, recent-item JSON, RSS feeds, the OPML roster, local-development magic links, authenticated text and voice-post creation, direct and recursive replies (`/getitemandreplies`, `/getthread`), editing, deletion, likes, media upload/download/delete, and the `/firehose` WebSocket. In production set `MAIL_WEBHOOK_URL` to an email service endpoint accepting `{to, screenname, operation, link}`; local requests return a development link directly.
 
 ## Cloudflare
@@ -33,7 +39,7 @@ The `celld/` Wrangler project deliberately omits the Cloudflare R2 binding. cell
 - `MEDIA_S3_ACCESS_KEY_ID`
 - `MEDIA_S3_SECRET_ACCESS_KEY`
 
-The default upload limit is 2 MiB (`MAX_MEDIA_UPLOAD_BYTES`) and supports audio and image MIME types. Uploaded objects are tenant-prefixed and served through `/media/<id>`, including byte ranges and `HEAD` requests. Magic-link requests and confirmations are rate-limited to 5 per 15 minutes by default (`AUTH_RATE_LIMIT`).
+The default upload limit is 2 MiB (`MAX_MEDIA_UPLOAD_BYTES`) and supports audio and image MIME types. Uploaded objects are tenant-prefixed and served through `/media/<id>`, including byte ranges and `HEAD` requests. Magic-link requests and confirmations are rate-limited to 5 per 15 minutes by default (`AUTH_RATE_LIMIT`). Authenticated writes are limited to 60 per 15 minutes by default (`WRITE_RATE_LIMIT`). An hourly scheduled cleanup removes unreferenced media older than 24 hours; configure the grace period with `MEDIA_ORPHAN_GRACE_HOURS`.
 
 ```sh
 celld deploy apps/server/celld \

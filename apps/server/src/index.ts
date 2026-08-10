@@ -26,6 +26,8 @@ export interface Env {
   MEDIA_S3_REGION?: string;
   MAX_MEDIA_UPLOAD_BYTES?: string;
   AUTH_RATE_LIMIT?: string;
+  WRITE_RATE_LIMIT?: string;
+  MEDIA_ORPHAN_GRACE_HOURS?: string;
 }
 
 type PostRow = {
@@ -173,9 +175,12 @@ function limit(value: string | null): number {
   return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 100) : 100;
 }
 
-async function withinRateLimit(env: Env, key: string): Promise<boolean> {
-  const configured = Number(env.AUTH_RATE_LIMIT ?? 5);
-  const max = Number.isInteger(configured) && configured > 0 ? configured : 5;
+function configuredRate(value: string | undefined, fallback: number): number {
+  const configured = Number(value ?? fallback);
+  return Number.isInteger(configured) && configured > 0 ? configured : fallback;
+}
+
+async function withinRateLimit(env: Env, key: string, max: number): Promise<boolean> {
   const windowStarted = Math.floor(Date.now() / 900_000) * 900_000;
   await env.DB.prepare(`
     INSERT INTO rate_limits (tenant_id, rate_key, window_started, request_count)
@@ -187,6 +192,10 @@ async function withinRateLimit(env: Env, key: string): Promise<boolean> {
   const row = await env.DB.prepare("SELECT request_count FROM rate_limits WHERE tenant_id = ? AND rate_key = ?")
     .bind(env.TENANT_ID, key).first<{request_count: number}>();
   return (row?.request_count ?? max + 1) <= max;
+}
+
+function rateLimited(message: string): Response {
+  return new Response(message, {status: 429, headers: new Headers({"retry-after": "900"})});
 }
 
 async function recentPosts(env: Env, tenantId: string, max: number, author?: string): Promise<PostRow[]> {
@@ -416,6 +425,7 @@ type MediaRow = {
   object_key: string;
   content_type: string;
   size: number;
+  created_at: string;
 };
 
 function decodeBase64(value: string): ArrayBuffer {
@@ -447,6 +457,7 @@ async function uploadMedia(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const account = await authenticate(env, url);
   if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  if (!(await withinRateLimit(env, `write:${account.screenname}`, configuredRate(env.WRITE_RATE_LIMIT, 60)))) return rateLimited("Too many write requests.");
   const type = url.searchParams.get("type")?.toLowerCase();
   if (!type || !mediaTypeAllowed(type)) return text("This media type is not supported.", "text/plain", 415);
 
@@ -469,11 +480,14 @@ async function uploadMedia(request: Request, env: Env): Promise<Response> {
   `).bind(env.TENANT_ID, account.screenname, placeholder, type, bytes.byteLength).run();
   const id = Number(inserted.meta.last_row_id);
   const key = `media/${env.TENANT_ID}/${id}`;
+  let stored = false;
   try {
     await putMedia(env, key, bytes, type);
+    stored = true;
     await env.DB.prepare("UPDATE media SET object_key = ? WHERE tenant_id = ? AND id = ?")
       .bind(key, env.TENANT_ID, id).run();
   } catch {
+    if (stored) await deleteMediaObject(env, key).catch(() => undefined);
     await env.DB.prepare("DELETE FROM media WHERE tenant_id = ? AND id = ?").bind(env.TENANT_ID, id).run();
     return text("The media item could not be stored.", "text/plain", 502);
   }
@@ -499,10 +513,38 @@ async function serveMedia(request: Request, env: Env, id: number): Promise<Respo
   return new Response(request.method === "HEAD" ? null : object.body, {status: range ? 206 : 200, headers: responseHeaders});
 }
 
+async function cleanupOrphanMedia(env: Env): Promise<number> {
+  const graceHours = Number(env.MEDIA_ORPHAN_GRACE_HOURS ?? 24);
+  const cutoff = new Date(Date.now() - (Number.isFinite(graceHours) && graceHours > 0 ? graceHours : 24) * 3_600_000).toISOString();
+  const result = await env.DB.prepare(`
+    SELECT m.id, m.tenant_id, m.owner, m.object_key, m.content_type, m.size, m.created_at
+    FROM media m
+    WHERE m.tenant_id = ? AND m.created_at < ?
+      AND NOT EXISTS (
+        SELECT 1 FROM posts p
+        WHERE p.tenant_id = m.tenant_id
+          AND p.enclosure_url LIKE '%/media/' || CAST(m.id AS TEXT)
+      )
+    LIMIT 100
+  `).bind(env.TENANT_ID, cutoff).all<MediaRow>();
+  let deleted = 0;
+  for (const media of result.results) {
+    try {
+      await deleteMediaObject(env, media.object_key);
+      await env.DB.prepare("DELETE FROM media WHERE tenant_id = ? AND id = ?").bind(env.TENANT_ID, media.id).run();
+      deleted++;
+    } catch {
+      // Keep failed objects for the next scheduled cleanup attempt.
+    }
+  }
+  return deleted;
+}
+
 async function deleteMedia(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const account = await authenticate(env, url);
   if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  if (!(await withinRateLimit(env, `write:${account.screenname}`, configuredRate(env.WRITE_RATE_LIMIT, 60)))) return rateLimited("Too many write requests.");
   const id = Number(url.searchParams.get("id"));
   const media = await env.DB.prepare(
     "SELECT id, tenant_id, owner, object_key, content_type, size FROM media WHERE tenant_id = ? AND id = ?",
@@ -518,6 +560,7 @@ async function createPost(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const account = await authenticate(env, url);
   if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  if (!(await withinRateLimit(env, `write:${account.screenname}`, configuredRate(env.WRITE_RATE_LIMIT, 60)))) return rateLimited("Too many write requests.");
 
   const raw = url.searchParams.get("jsontext") ?? await request.text();
   if (!raw || raw.length > 100_000) return text("The post is missing or too large.", "text/plain", 400);
@@ -571,6 +614,7 @@ async function updatePost(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const account = await authenticate(env, url);
   if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  if (!(await withinRateLimit(env, `write:${account.screenname}`, configuredRate(env.WRITE_RATE_LIMIT, 60)))) return rateLimited("Too many write requests.");
   const raw = url.searchParams.get("jsontext") ?? await request.text();
   let payload: Record<string, unknown>;
   try {
@@ -608,6 +652,7 @@ async function deletePost(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const account = await authenticate(env, url);
   if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  if (!(await withinRateLimit(env, `write:${account.screenname}`, configuredRate(env.WRITE_RATE_LIMIT, 60)))) return rateLimited("Too many write requests.");
   const id = Number(url.searchParams.get("id"));
   if (!Number.isInteger(id) || id < 1) return text("A numeric id is required.", "text/plain", 400);
   const current = await post(env, env.TENANT_ID, id);
@@ -623,6 +668,7 @@ async function toggleLike(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const account = await authenticate(env, url);
   if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  if (!(await withinRateLimit(env, `write:${account.screenname}`, configuredRate(env.WRITE_RATE_LIMIT, 60)))) return rateLimited("Too many write requests.");
   const id = Number(url.searchParams.get("id"));
   if (!Number.isInteger(id) || id < 1) return text("A numeric id is required.", "text/plain", 400);
   if (!(await post(env, env.TENANT_ID, id))) return text("No post with that id.", "text/plain", 404);
@@ -665,13 +711,13 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET" && path === "/auth/confirm") {
     const email = url.searchParams.get("email")?.toLowerCase() ?? "unknown";
     const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-    if (!(await withinRateLimit(env, `confirm:${ip}:${email}`))) return new Response("Too many confirmation attempts.", {status: 429, headers: new Headers({"retry-after": "900"})});
+    if (!(await withinRateLimit(env, `confirm:${ip}:${email}`, configuredRate(env.AUTH_RATE_LIMIT, 5)))) return new Response("Too many confirmation attempts.", {status: 429, headers: new Headers({"retry-after": "900"})});
     return confirmMagicLink(request, env);
   }
   if (request.method === "GET" && (path === "/createnewuser" || path === "/sendconfirmingemail")) {
     const email = (url.searchParams.get("email") ?? "unknown").toLowerCase();
     const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-    if (!(await withinRateLimit(env, `request:${ip}:${email}`))) return new Response("Too many sign-in requests.", {status: 429, headers: new Headers({"retry-after": "900"})});
+    if (!(await withinRateLimit(env, `request:${ip}:${email}`, configuredRate(env.AUTH_RATE_LIMIT, 5)))) return new Response("Too many sign-in requests.", {status: 429, headers: new Headers({"retry-after": "900"})});
     return createOrUpdateConfirmation(request, env, path === "/createnewuser");
   }
   if (request.method === "POST" && path === "/newpost") return createPost(request, env);
@@ -783,5 +829,8 @@ export class Firehose {
 export default {
   fetch(request: Request, env: Env): Promise<Response> {
     return handle(request, env);
+  },
+  async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    await cleanupOrphanMedia(env);
   },
 };
