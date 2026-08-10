@@ -43,6 +43,8 @@ type PostRow = {
   enclosure_url: string | null;
   enclosure_type: string | null;
   enclosure_length: number | null;
+  ct_replies: number;
+  ct_likes: number;
   published_at: string;
 };
 
@@ -58,6 +60,8 @@ type UserRow = {
 const recentPostsSql = `
   SELECT p.id, p.author, p.title, p.description, p.markdowntext, p.link,
          p.in_reply_to, p.enclosure_url, p.enclosure_type, p.enclosure_length,
+         (SELECT COUNT(*) FROM posts replies WHERE replies.tenant_id = p.tenant_id AND replies.in_reply_to = p.id AND replies.deleted_at IS NULL) AS ct_replies,
+         (SELECT COUNT(*) FROM likes post_likes WHERE post_likes.tenant_id = p.tenant_id AND post_likes.post_id = p.id) AS ct_likes,
          p.published_at, u.display_name AS author_name, u.feed_title,
          u.feed_link, u.feed_description, u.avatar_url
   FROM posts p
@@ -158,6 +162,8 @@ function postFromRow(row: PostRow, base: string): Post {
   if (row.enclosure_url) post.enclosureUrl = row.enclosure_url;
   if (row.enclosure_type) post.enclosureType = row.enclosure_type;
   if (row.enclosure_length !== null) post.enclosureLength = row.enclosure_length;
+  post.ctReplies = row.ct_replies;
+  post.ctLikes = row.ct_likes;
   return post;
 }
 
@@ -508,6 +514,84 @@ async function createPost(request: Request, env: Env): Promise<Response> {
   return json(item);
 }
 
+async function updatePost(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const account = await authenticate(env, url);
+  if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  const raw = url.searchParams.get("jsontext") ?? await request.text();
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return text("The post does not contain valid JSON.", "text/plain", 400);
+  }
+  const id = Number(payload.id);
+  if (!Number.isInteger(id) || id < 1) return text("A numeric id is required.", "text/plain", 400);
+  const current = await post(env, env.TENANT_ID, id);
+  if (!current) return text("No post with that id.", "text/plain", 404);
+  if (current.author !== account.screenname) return text("Only the author can edit this post.", "text/plain", 403);
+  const source = typeof payload.markdowntext === "string"
+    ? payload.markdowntext
+    : typeof payload.description === "string" ? payload.description : current.markdowntext ?? "";
+  if (!source.trim() && !current.enclosure_url) return text("The post has no text or media.", "text/plain", 400);
+  await env.DB.prepare(`
+    UPDATE posts
+    SET title = ?, description = ?, markdowntext = ?, updated_at = ?
+    WHERE tenant_id = ? AND id = ? AND author = ? AND deleted_at IS NULL
+  `).bind(
+    payload.title === null ? null : typeof payload.title === "string" ? payload.title.slice(0, 500) : current.title,
+    source.trim() ? markdownToHtml(source) : null,
+    source.trim() ? source : null,
+    new Date().toISOString(), env.TENANT_ID, id, account.screenname,
+  ).run();
+  const updated = await post(env, env.TENANT_ID, id);
+  if (!updated) return text("The post was updated but could not be read back.", "text/plain", 500);
+  const item = jsonPost(postFromRow(updated, baseUrl(request, env)));
+  await broadcast(env, "updatedItem", item);
+  return json(item);
+}
+
+async function deletePost(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const account = await authenticate(env, url);
+  if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  const id = Number(url.searchParams.get("id"));
+  if (!Number.isInteger(id) || id < 1) return text("A numeric id is required.", "text/plain", 400);
+  const current = await post(env, env.TENANT_ID, id);
+  if (!current) return text("No post with that id.", "text/plain", 404);
+  if (current.author !== account.screenname) return text("Only the author can delete this post.", "text/plain", 403);
+  await env.DB.prepare("UPDATE posts SET deleted_at = ?, updated_at = ? WHERE tenant_id = ? AND id = ?")
+    .bind(new Date().toISOString(), new Date().toISOString(), env.TENANT_ID, id).run();
+  await broadcast(env, "updatedItem", {id, deleted: true});
+  return json({ok: true, id, deleted: true});
+}
+
+async function toggleLike(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const account = await authenticate(env, url);
+  if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  const id = Number(url.searchParams.get("id"));
+  if (!Number.isInteger(id) || id < 1) return text("A numeric id is required.", "text/plain", 400);
+  if (!(await post(env, env.TENANT_ID, id))) return text("No post with that id.", "text/plain", 404);
+  const existing = await env.DB.prepare("SELECT 1 FROM likes WHERE tenant_id = ? AND screenname = ? AND post_id = ?")
+    .bind(env.TENANT_ID, account.screenname, id).first();
+  const liked = !existing;
+  if (liked) {
+    await env.DB.prepare("INSERT INTO likes (tenant_id, screenname, post_id) VALUES (?, ?, ?)")
+      .bind(env.TENANT_ID, account.screenname, id).run();
+  } else {
+    await env.DB.prepare("DELETE FROM likes WHERE tenant_id = ? AND screenname = ? AND post_id = ?")
+      .bind(env.TENANT_ID, account.screenname, id).run();
+  }
+  const current = await post(env, env.TENANT_ID, id);
+  if (!current) return text("The post disappeared.", "text/plain", 404);
+  const item = postFromRow(current, baseUrl(request, env));
+  item.flLiked = liked;
+  const output = jsonPost(item);
+  await broadcast(env, "updatedItem", output);
+  return json(output);
+}
+
 async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -529,6 +613,9 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET" && path === "/createnewuser") return createOrUpdateConfirmation(request, env, true);
   if (request.method === "GET" && path === "/sendconfirmingemail") return createOrUpdateConfirmation(request, env, false);
   if (request.method === "POST" && path === "/newpost") return createPost(request, env);
+  if (request.method === "POST" && path === "/updatepost") return updatePost(request, env);
+  if (request.method === "POST" && path === "/deletepost") return deletePost(request, env);
+  if (request.method === "POST" && path === "/togglelike") return toggleLike(request, env);
   if (request.method === "POST" && path === "/uploadmedia") return uploadMedia(request, env);
   if (request.method === "POST" && path === "/deletemedia") return deleteMedia(request, env);
   const mediaMatch = path.match(/^\/media\/(\d+)$/);

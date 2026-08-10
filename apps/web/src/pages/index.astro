@@ -98,12 +98,16 @@ const serverUrl = apiUrl || "";
         author?: string;
         screenname?: string;
         description?: string;
+        markdowntext?: string;
         title?: string;
         pubDate: string;
         enclosureUrl?: string;
         enclosureType?: string;
         enclosureLength?: number;
         inReplyToNum?: number;
+        ctLikes?: number;
+        flLiked?: boolean;
+        deleted?: boolean;
       };
 
       const root = document.documentElement;
@@ -120,8 +124,10 @@ const serverUrl = apiUrl || "";
       const voiceButton = document.querySelector<HTMLButtonElement>("#voice-record");
       const voiceStatus = document.querySelector<HTMLSpanElement>("#voice-status");
       let replyTarget: number | undefined;
+      let editingId: number | undefined;
       let pendingEnclosure: {url: string; type: string; length: number; duration?: number} | undefined;
-      let renderedIds = new Set<number>();
+      const renderedIds = new Set<number>();
+      const renderedArticles = new Map<number, HTMLElement>();
       let session: {email: string; code: string; screenname: string} | undefined;
       try {
         const saved = JSON.parse(localStorage.getItem(authKey) ?? "null");
@@ -245,12 +251,13 @@ const serverUrl = apiUrl || "";
         if (!session || (!postText?.value.trim() && !pendingEnclosure)) return;
         publish!.disabled = true;
         const params = new URLSearchParams({emailaddress: session.email, emailcode: session.code});
-        const response = await fetch(`${apiUrl}/newpost?${params}`, {
+        const response = await fetch(`${apiUrl}/${editingId ? "updatepost" : "newpost"}?${params}`, {
           method: "POST",
           headers: {"content-type": "application/json"},
           body: JSON.stringify({
+            id: editingId,
             markdowntext: postText.value,
-            inReplyTo: replyTarget,
+            inReplyTo: editingId ? undefined : replyTarget,
             enclosureUrl: pendingEnclosure?.url,
             enclosureType: pendingEnclosure?.type,
             enclosureLength: pendingEnclosure?.length,
@@ -263,7 +270,9 @@ const serverUrl = apiUrl || "";
         }
         postText.value = "";
         replyTarget = undefined;
+        editingId = undefined;
         pendingEnclosure = undefined;
+        publish!.textContent = "Publish";
         setStatus(voiceStatus, "Up to 4 minutes.");
         setStatus(composerStatus, "Published.");
         publish!.disabled = false;
@@ -323,6 +332,42 @@ const serverUrl = apiUrl || "";
           postText?.focus();
         });
         actions.append(reply);
+        if (session?.screenname === item.screenname) {
+          const edit = document.createElement("button");
+          edit.className = "text-accent hover:underline";
+          edit.type = "button";
+          edit.textContent = "Edit";
+          edit.addEventListener("click", () => {
+            editingId = item.id;
+            if (postText) postText.value = item.markdowntext ?? "";
+            if (publish) publish.textContent = "Save edit";
+            setStatus(composerStatus, `Editing post ${item.id}.`);
+            postText?.focus();
+          });
+          actions.append(edit);
+          const remove = document.createElement("button");
+          remove.className = "text-danger hover:underline";
+          remove.type = "button";
+          remove.textContent = "Delete";
+          remove.addEventListener("click", async () => {
+            if (!confirm("Delete this post?")) return;
+            const params = new URLSearchParams({emailaddress: session!.email, emailcode: session!.code, id: String(item.id)});
+            const response = await fetch(`${apiUrl}/deletepost?${params}`, {method: "POST"});
+            if (response.ok) applyItem({id: item.id, pubDate: item.pubDate, deleted: true});
+          });
+          actions.append(remove);
+        }
+        const like = document.createElement("button");
+        like.className = "text-accent hover:underline";
+        like.type = "button";
+        like.textContent = `${item.flLiked ? "Unlike" : "Like"} (${item.ctLikes ?? 0})`;
+        like.addEventListener("click", async () => {
+          if (!session) return;
+          const params = new URLSearchParams({emailaddress: session.email, emailcode: session.code, id: String(item.id)});
+          const response = await fetch(`${apiUrl}/togglelike?${params}`, {method: "POST"});
+          if (response.ok) applyItem(await response.json() as Item);
+        });
+        actions.append(like);
         const permalink = document.createElement("a");
         permalink.className = "text-accent hover:underline";
         permalink.href = `${apiUrl}/?id=${item.id}`;
@@ -336,7 +381,26 @@ const serverUrl = apiUrl || "";
       function appendItem(item: Item) {
         if (!timeline || renderedIds.has(item.id)) return;
         renderedIds.add(item.id);
-        timeline.append(renderItem(item));
+        const article = renderItem(item);
+        renderedArticles.set(item.id, article);
+        timeline.append(article);
+      }
+
+      function applyItem(item: Item) {
+        const current = renderedArticles.get(item.id);
+        if (item.deleted) {
+          current?.remove();
+          renderedArticles.delete(item.id);
+          renderedIds.delete(item.id);
+          return;
+        }
+        if (!current) {
+          appendItem(item);
+          return;
+        }
+        const replacement = renderItem(item);
+        renderedArticles.set(item.id, replacement);
+        current.replaceWith(replacement);
       }
 
       async function loadFeed() {
@@ -348,6 +412,7 @@ const serverUrl = apiUrl || "";
           const payload = await response.json() as Item[] | Item;
           const items = Array.isArray(payload) ? payload : [payload];
           renderedIds.clear();
+          renderedArticles.clear();
           timeline?.replaceChildren();
           if (itemId) {
             const heading = document.querySelector<HTMLHeadingElement>("#timeline-heading");
@@ -369,7 +434,7 @@ const serverUrl = apiUrl || "";
         }
       }
 
-      function connectFirehose() {
+      function connectFirehose(attempt = 0) {
         if (!("WebSocket" in window)) return;
         const wsOrigin = apiUrl
           ? apiUrl.replace(/^http/, "ws")
@@ -383,15 +448,21 @@ const serverUrl = apiUrl || "";
           if (separator < 1) return;
           try {
             const message = JSON.parse(event.data.slice(separator + 1)) as {item?: Item};
-            if (message.item) appendItem(message.item);
+            if (message.item) {
+              if (event.data.startsWith("updatedItem")) applyItem(message.item);
+              else appendItem(message.item);
+            }
           } catch {
             // Ignore malformed firehose messages and keep the feed usable.
           }
         });
-        socket.addEventListener("close", () => setStatus(state, "Polling feed"));
+        socket.addEventListener("close", () => {
+          setStatus(state, "Polling feed");
+          window.setTimeout(() => connectFirehose(Math.min(attempt + 1, 6)), Math.min(30_000, 1000 * 2 ** attempt));
+        });
       }
 
-      loadFeed().then(connectFirehose);
+      loadFeed().then(() => connectFirehose());
     </script>
   </body>
 </html>

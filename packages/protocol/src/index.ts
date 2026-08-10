@@ -15,6 +15,10 @@ export type Post = {
   enclosureUrl?: string;
   enclosureType?: string;
   enclosureLength?: number;
+  ctReplies?: number;
+  ctLikes?: number;
+  flLiked?: boolean;
+  deleted?: boolean;
 };
 
 export type Member = {
@@ -116,5 +120,9 @@ export function jsonPost(post: Post): Record<string, unknown> {
     enclosureUrl: post.enclosureUrl,
     enclosureType: post.enclosureType,
     enclosureLength: post.enclosureLength,
+    ctReplies: post.ctReplies,
+    ctLikes: post.ctLikes,
+    flLiked: post.flLiked,
+    deleted: post.deleted,
   }).filter(([, value]) => value !== undefined));
 }
