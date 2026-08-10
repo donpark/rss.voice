@@ -43,9 +43,15 @@ const serverUrl = apiUrl || "";
         <form id="composer" class="border-line border-b bg-panel px-4 py-4 sm:px-8">
           <label class="sr-only" for="post-text">Write a post</label>
           <textarea id="post-text" class="min-h-24 w-full resize-y rounded-xl border border-line bg-panel-strong p-4 text-sm leading-6 text-ink placeholder:text-muted" placeholder="Speak into the feed…" disabled></textarea>
-          <div class="mt-3 flex items-center justify-between gap-3">
-            <span id="composer-status" class="text-xs text-muted">Sign in to publish.</span>
-            <button id="publish" class="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled>Publish</button>
+          <div class="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3 text-xs text-muted">
+              <button id="voice-record" class="rounded-full border border-line px-3 py-1.5 font-semibold text-accent disabled:cursor-not-allowed disabled:opacity-40" type="button" disabled>Record voice</button>
+              <span id="voice-status">Up to 4 minutes.</span>
+            </div>
+            <div class="flex items-center gap-3">
+              <span id="composer-status" class="text-xs text-muted">Sign in to publish.</span>
+              <button id="publish" class="rounded-full bg-accent px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled>Publish</button>
+            </div>
           </div>
         </form>
 
@@ -111,8 +117,11 @@ const serverUrl = apiUrl || "";
       const composer = document.querySelector<HTMLFormElement>("#composer");
       const postText = document.querySelector<HTMLTextAreaElement>("#post-text");
       const publish = document.querySelector<HTMLButtonElement>("#publish");
+      const voiceButton = document.querySelector<HTMLButtonElement>("#voice-record");
+      const voiceStatus = document.querySelector<HTMLSpanElement>("#voice-status");
       let replyTarget: number | undefined;
-      const renderedIds = new Set<number>();
+      let pendingEnclosure: {url: string; type: string; length: number; duration?: number} | undefined;
+      let renderedIds = new Set<number>();
       let session: {email: string; code: string; screenname: string} | undefined;
       try {
         const saved = JSON.parse(localStorage.getItem(authKey) ?? "null");
@@ -129,6 +138,7 @@ const serverUrl = apiUrl || "";
         const signedIn = session !== undefined;
         if (postText) postText.disabled = !signedIn;
         if (publish) publish.disabled = !signedIn;
+        if (voiceButton) voiceButton.disabled = !signedIn;
         setStatus(composerStatus, signedIn ? `Publishing as ${session!.screenname}.` : "Sign in to publish.");
       }
 
@@ -177,15 +187,74 @@ const serverUrl = apiUrl || "";
         requestMagicLink("signin").catch((error) => setStatus(authStatus, error instanceof Error ? error.message : "Sign-in failed."));
       });
 
+      voiceButton?.addEventListener("click", async () => {
+        if (!session || !("MediaRecorder" in window) || !navigator.mediaDevices?.getUserMedia) {
+          setStatus(voiceStatus, "Voice recording is not supported here.");
+          return;
+        }
+        const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"]
+          .find((type) => MediaRecorder.isTypeSupported(type));
+        if (!mimeType) {
+          setStatus(voiceStatus, "No supported audio format was found.");
+          return;
+        }
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({audio: true});
+        } catch {
+          setStatus(voiceStatus, "Microphone access was not granted.");
+          return;
+        }
+        const recorder = new MediaRecorder(stream, {mimeType});
+        const chunks: Blob[] = [];
+        const timer = window.setTimeout(() => recorder.stop(), 240_000);
+        voiceButton.textContent = "Stop recording";
+        setStatus(voiceStatus, "Recording…");
+        recorder.addEventListener("dataavailable", (event) => event.data.size && chunks.push(event.data));
+        recorder.addEventListener("stop", async () => {
+          window.clearTimeout(timer);
+          stream.getTracks().forEach((track) => track.stop());
+          voiceButton.textContent = "Record voice";
+          const blob = new Blob(chunks, {type: mimeType});
+          setStatus(voiceStatus, "Uploading voice clip…");
+          const params = new URLSearchParams({
+            emailaddress: session!.email,
+            emailcode: session!.code,
+            type: mimeType,
+            encoding: "raw",
+          });
+          const response = await fetch(`${apiUrl}/uploadmedia?${params}`, {method: "POST", body: blob});
+          if (!response.ok) {
+            setStatus(voiceStatus, await response.text());
+            return;
+          }
+          const media = await response.json() as {url: string; type: string; size: number};
+          const duration = await new Promise<number | undefined>((resolve) => {
+            const audio = new Audio(URL.createObjectURL(blob));
+            audio.addEventListener("loadedmetadata", () => resolve(Number.isFinite(audio.duration) ? Math.round(audio.duration) : undefined), {once: true});
+            audio.addEventListener("error", () => resolve(undefined), {once: true});
+          });
+          pendingEnclosure = {url: media.url, type: media.type, length: media.size, duration};
+          setStatus(voiceStatus, duration ? `Voice clip ready (${duration}s).` : "Voice clip ready.");
+        });
+        recorder.start();
+      });
+
       composer?.addEventListener("submit", async (event) => {
         event.preventDefault();
-        if (!session || !postText?.value.trim()) return;
+        if (!session || (!postText?.value.trim() && !pendingEnclosure)) return;
         publish!.disabled = true;
         const params = new URLSearchParams({emailaddress: session.email, emailcode: session.code});
         const response = await fetch(`${apiUrl}/newpost?${params}`, {
           method: "POST",
           headers: {"content-type": "application/json"},
-          body: JSON.stringify({markdowntext: postText.value, inReplyTo: replyTarget}),
+          body: JSON.stringify({
+            markdowntext: postText.value,
+            inReplyTo: replyTarget,
+            enclosureUrl: pendingEnclosure?.url,
+            enclosureType: pendingEnclosure?.type,
+            enclosureLength: pendingEnclosure?.length,
+          }),
         });
         if (!response.ok) {
           setStatus(composerStatus, await response.text());
@@ -194,6 +263,8 @@ const serverUrl = apiUrl || "";
         }
         postText.value = "";
         replyTarget = undefined;
+        pendingEnclosure = undefined;
+        setStatus(voiceStatus, "Up to 4 minutes.");
         setStatus(composerStatus, "Published.");
         publish!.disabled = false;
         await loadFeed();

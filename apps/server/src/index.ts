@@ -7,6 +7,7 @@ import {
   type Member,
   type Post,
 } from "@rss-voice/protocol";
+import {deleteMediaObject, getMedia, putMedia} from "./object-store";
 
 export interface Env {
   DB: D1Database;
@@ -18,6 +19,12 @@ export interface Env {
   WEB_URL?: string;
   MAIL_WEBHOOK_URL?: string;
   DEV_MODE?: string;
+  MEDIA_S3_ENDPOINT?: string;
+  MEDIA_S3_BUCKET?: string;
+  MEDIA_S3_ACCESS_KEY_ID?: string;
+  MEDIA_S3_SECRET_ACCESS_KEY?: string;
+  MEDIA_S3_REGION?: string;
+  MAX_MEDIA_UPLOAD_BYTES?: string;
 }
 
 type PostRow = {
@@ -360,6 +367,94 @@ async function broadcast(env: Env, verb: string, item: Record<string, unknown>):
   }
 }
 
+type MediaRow = {
+  id: number;
+  tenant_id: string;
+  owner: string;
+  object_key: string;
+  content_type: string;
+  size: number;
+};
+
+function decodeBase64(value: string): ArrayBuffer {
+  const binary = atob(value.replaceAll(/\s/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes.buffer;
+}
+
+function mediaTypeAllowed(type: string): boolean {
+  return type.startsWith("audio/") || type.startsWith("image/");
+}
+
+async function uploadMedia(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const account = await authenticate(env, url);
+  if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  const type = url.searchParams.get("type")?.toLowerCase();
+  if (!type || !mediaTypeAllowed(type)) return text("This media type is not supported.", "text/plain", 415);
+
+  const configuredLimit = Number(env.MAX_MEDIA_UPLOAD_BYTES ?? 2 * 1024 * 1024);
+  const maxBytes = Number.isInteger(configuredLimit) && configuredLimit > 0 ? configuredLimit : 2 * 1024 * 1024;
+  const body = await request.arrayBuffer();
+  if (body.byteLength > Math.ceil(maxBytes * 4 / 3) + 4) return text("The media item is too large.", "text/plain", 413);
+  let bytes: ArrayBuffer;
+  try {
+    bytes = url.searchParams.get("encoding") === "raw" ? body : decodeBase64(new TextDecoder().decode(body));
+  } catch {
+    return text("The media body is not valid base64.", "text/plain", 400);
+  }
+  if (bytes.byteLength === 0 || bytes.byteLength > maxBytes) return text("The media item is too large.", "text/plain", 413);
+
+  const placeholder = `pending/${crypto.randomUUID()}`;
+  const inserted = await env.DB.prepare(`
+    INSERT INTO media (tenant_id, owner, object_key, content_type, size)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(env.TENANT_ID, account.screenname, placeholder, type, bytes.byteLength).run();
+  const id = Number(inserted.meta.last_row_id);
+  const key = `media/${env.TENANT_ID}/${id}`;
+  try {
+    await putMedia(env, key, bytes, type);
+    await env.DB.prepare("UPDATE media SET object_key = ? WHERE tenant_id = ? AND id = ?")
+      .bind(key, env.TENANT_ID, id).run();
+  } catch {
+    await env.DB.prepare("DELETE FROM media WHERE tenant_id = ? AND id = ?").bind(env.TENANT_ID, id).run();
+    return text("The media item could not be stored.", "text/plain", 502);
+  }
+  return json({url: `${baseUrl(request, env)}/media/${id}`, id, type, size: bytes.byteLength});
+}
+
+async function serveMedia(env: Env, id: number): Promise<Response> {
+  const media = await env.DB.prepare(
+    "SELECT id, tenant_id, owner, object_key, content_type, size FROM media WHERE tenant_id = ? AND id = ?",
+  ).bind(env.TENANT_ID, id).first<MediaRow>();
+  if (!media) return text("No media item with that id.", "text/plain", 404);
+  const object = await getMedia(env, media.object_key);
+  if (!object) return text("The media object is missing.", "text/plain", 404);
+  const responseHeaders = new Headers(object.headers);
+  responseHeaders.set("content-type", media.content_type);
+  responseHeaders.set("content-length", String(media.size));
+  responseHeaders.set("access-control-allow-origin", "*");
+  responseHeaders.set("accept-ranges", "bytes");
+  responseHeaders.set("cache-control", "public, max-age=31536000, immutable");
+  return new Response(object.body, {headers: responseHeaders});
+}
+
+async function deleteMedia(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const account = await authenticate(env, url);
+  if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+  const id = Number(url.searchParams.get("id"));
+  const media = await env.DB.prepare(
+    "SELECT id, tenant_id, owner, object_key, content_type, size FROM media WHERE tenant_id = ? AND id = ?",
+  ).bind(env.TENANT_ID, id).first<MediaRow>();
+  if (!media) return text("No media item with that id.", "text/plain", 404);
+  if (media.owner !== account.screenname) return text("The media item belongs to another member.", "text/plain", 403);
+  await deleteMediaObject(env, media.object_key);
+  await env.DB.prepare("DELETE FROM media WHERE tenant_id = ? AND id = ?").bind(env.TENANT_ID, id).run();
+  return json({ok: true});
+}
+
 async function createPost(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const account = await authenticate(env, url);
@@ -375,23 +470,33 @@ async function createPost(request: Request, env: Env): Promise<Response> {
   }
 
   const source = typeof payload.markdowntext === "string" ? payload.markdowntext : typeof payload.description === "string" ? payload.description : "";
-  if (!source.trim()) return text("The post has no text.", "text/plain", 400);
+  const enclosureUrl = typeof payload.enclosureUrl === "string" ? payload.enclosureUrl : null;
+  if (!source.trim() && !enclosureUrl) return text("The post has no text or media.", "text/plain", 400);
   const inReplyTo = payload.inReplyTo ?? payload.inReplyToNum;
   const replyId = inReplyTo === undefined || inReplyTo === null ? null : Number(inReplyTo);
   if (replyId !== null && (!Number.isInteger(replyId) || replyId < 1)) return text("The reply target is invalid.", "text/plain", 400);
   if (replyId !== null && !(await post(env, env.TENANT_ID, replyId))) return text("The reply target does not exist.", "text/plain", 400);
 
+  const enclosureType = typeof payload.enclosureType === "string" ? payload.enclosureType : null;
+  const enclosureLength = payload.enclosureLength === undefined ? null : Number(payload.enclosureLength);
+  if (enclosureUrl && (enclosureLength === null || !enclosureType || !Number.isInteger(enclosureLength) || enclosureLength < 1)) {
+    return text("An enclosure needs a type and byte length.", "text/plain", 400);
+  }
+
   const result = await env.DB.prepare(`
-    INSERT INTO posts (tenant_id, author, title, description, markdowntext, link, in_reply_to, published_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO posts (tenant_id, author, title, description, markdowntext, link, in_reply_to, enclosure_url, enclosure_type, enclosure_length, published_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     env.TENANT_ID,
     account.screenname,
     typeof payload.title === "string" ? payload.title.slice(0, 500) : null,
-    markdownToHtml(source),
-    source,
+    source.trim() ? markdownToHtml(source) : null,
+    source.trim() ? source : null,
     typeof payload.link === "string" ? payload.link : null,
     replyId,
+    enclosureUrl,
+    enclosureType,
+    enclosureUrl ? enclosureLength : null,
     new Date().toISOString(),
     new Date().toISOString(),
   ).run();
@@ -416,7 +521,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (request.method === "OPTIONS") {
     return new Response(null, {status: 204, headers: new Headers({
       "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET, OPTIONS",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
       "access-control-allow-headers": "content-type",
     })});
   }
@@ -424,6 +529,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (request.method === "GET" && path === "/createnewuser") return createOrUpdateConfirmation(request, env, true);
   if (request.method === "GET" && path === "/sendconfirmingemail") return createOrUpdateConfirmation(request, env, false);
   if (request.method === "POST" && path === "/newpost") return createPost(request, env);
+  if (request.method === "POST" && path === "/uploadmedia") return uploadMedia(request, env);
+  if (request.method === "POST" && path === "/deletemedia") return deleteMedia(request, env);
+  const mediaMatch = path.match(/^\/media\/(\d+)$/);
+  if (request.method === "GET" && mediaMatch) return serveMedia(env, Number(mediaMatch[1]));
   if (request.method !== "GET") return text("Method not allowed.", "text/plain", 405);
 
   if (path === "/") {

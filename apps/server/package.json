@@ -7,6 +7,7 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
-    "@rss-voice/protocol": "*"
+    "@rss-voice/protocol": "*",
+    "aws4fetch": "^1.0.20"
   }
 }
