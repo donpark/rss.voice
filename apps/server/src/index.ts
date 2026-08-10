@@ -174,6 +174,13 @@ async function post(env: Env, tenantId: string, id: number): Promise<PostRow | n
     .first<PostRow>();
 }
 
+async function postAndReplies(env: Env, tenantId: string, id: number): Promise<PostRow[]> {
+  const result = await env.DB.prepare(`${recentPostsSql} AND (p.id = ? OR p.in_reply_to = ?) ORDER BY p.published_at ASC`)
+    .bind(tenantId, id, id)
+    .all<PostRow>();
+  return result.results;
+}
+
 async function user(env: Env, tenantId: string, screenname: string): Promise<UserRow | null> {
   return env.DB.prepare(`
     SELECT screenname, display_name, feed_title, feed_link, feed_description, avatar_url
@@ -342,9 +349,12 @@ async function authenticate(env: Env, url: URL): Promise<{screenname: string} | 
 
 async function broadcast(env: Env, verb: string, item: Record<string, unknown>): Promise<void> {
   const id = env.FIREHOSE.idFromName(env.TENANT_ID);
-  const stub = env.FIREHOSE.get(id) as DurableObjectStub & {broadcast(message: string): Promise<void>};
+  const stub = env.FIREHOSE.get(id);
   try {
-    await stub.broadcast(`${verb}\r${JSON.stringify({item})}`);
+    await stub.fetch("https://firehose/broadcast", {
+      method: "POST",
+      body: `${verb}\r${JSON.stringify({item})}`,
+    });
   } catch {
     // A disconnected firehose must not make a successful post fail.
   }
@@ -398,6 +408,11 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const path = url.pathname;
   const base = baseUrl(request, env);
 
+  if (request.headers.get("Upgrade")?.toLowerCase() === "websocket" && (path === "/" || path === "/firehose")) {
+    const id = env.FIREHOSE.idFromName(env.TENANT_ID);
+    return env.FIREHOSE.get(id).fetch(request);
+  }
+
   if (request.method === "OPTIONS") {
     return new Response(null, {status: 204, headers: new Headers({
       "access-control-allow-origin": "*",
@@ -422,6 +437,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const id = Number(url.searchParams.get("id"));
     if (!Number.isInteger(id) || id < 1) return text("A numeric id is required.", "text/plain", 400);
     return itemResponse(request, env, id);
+  }
+  if (path === "/getitemandreplies") {
+    const id = Number(url.searchParams.get("idparent"));
+    if (!Number.isInteger(id) || id < 1) return text("A numeric idparent is required.", "text/plain", 400);
+    const items = (await postAndReplies(env, env.TENANT_ID, id)).map((row) => jsonPost(postFromRow(row, base)));
+    return json(items);
   }
   if (path === "/getrecentitems") {
     const items = (await recentPosts(env, env.TENANT_ID, limit(url.searchParams.get("ct"))))
@@ -465,7 +486,21 @@ export class Firehose {
 
   constructor() {}
 
+  private send(message: string): void {
+    for (const socket of this.sockets) {
+      try {
+        socket.send(message);
+      } catch {
+        this.sockets.delete(socket);
+      }
+    }
+  }
+
   async fetch(request: Request): Promise<Response> {
+    if (request.method === "POST" && new URL(request.url).pathname === "/broadcast") {
+      this.send(await request.text());
+      return new Response("ok");
+    }
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return text("WebSocket upgrade required.", "text/plain", 426);
     }
@@ -479,15 +514,6 @@ export class Firehose {
     return new Response(null, {status: 101, webSocket: client});
   }
 
-  async broadcast(message: string): Promise<void> {
-    for (const socket of this.sockets) {
-      try {
-        socket.send(message);
-      } catch {
-        this.sockets.delete(socket);
-      }
-    }
-  }
 }
 
 export default {

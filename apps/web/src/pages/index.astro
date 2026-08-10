@@ -97,6 +97,7 @@ const serverUrl = apiUrl || "";
         enclosureUrl?: string;
         enclosureType?: string;
         enclosureLength?: number;
+        inReplyToNum?: number;
       };
 
       const root = document.documentElement;
@@ -110,6 +111,8 @@ const serverUrl = apiUrl || "";
       const composer = document.querySelector<HTMLFormElement>("#composer");
       const postText = document.querySelector<HTMLTextAreaElement>("#post-text");
       const publish = document.querySelector<HTMLButtonElement>("#publish");
+      let replyTarget: number | undefined;
+      const renderedIds = new Set<number>();
       let session: {email: string; code: string; screenname: string} | undefined;
       try {
         const saved = JSON.parse(localStorage.getItem(authKey) ?? "null");
@@ -182,7 +185,7 @@ const serverUrl = apiUrl || "";
         const response = await fetch(`${apiUrl}/newpost?${params}`, {
           method: "POST",
           headers: {"content-type": "application/json"},
-          body: JSON.stringify({markdowntext: postText.value}),
+          body: JSON.stringify({markdowntext: postText.value, inReplyTo: replyTarget}),
         });
         if (!response.ok) {
           setStatus(composerStatus, await response.text());
@@ -190,6 +193,7 @@ const serverUrl = apiUrl || "";
           return;
         }
         postText.value = "";
+        replyTarget = undefined;
         setStatus(composerStatus, "Published.");
         publish!.disabled = false;
         await loadFeed();
@@ -236,13 +240,32 @@ const serverUrl = apiUrl || "";
         const footer = document.createElement("div");
         footer.className = "mt-5 flex items-center justify-between border-line border-t pt-3 text-xs text-muted";
         addText(footer, new Date(item.pubDate).toLocaleString([], {dateStyle: "medium", timeStyle: "short"}));
+        const actions = document.createElement("div");
+        actions.className = "flex items-center gap-3";
+        const reply = document.createElement("button");
+        reply.className = "text-accent hover:underline";
+        reply.type = "button";
+        reply.textContent = "Reply";
+        reply.addEventListener("click", () => {
+          replyTarget = item.id;
+          setStatus(composerStatus, `Replying to ${item.author ?? item.screenname ?? "this post"}.`);
+          postText?.focus();
+        });
+        actions.append(reply);
         const permalink = document.createElement("a");
         permalink.className = "text-accent hover:underline";
         permalink.href = `${apiUrl}/?id=${item.id}`;
         permalink.textContent = "Permalink";
-        footer.append(permalink);
+        actions.append(permalink);
+        footer.append(actions);
         article.append(footer);
         return article;
+      }
+
+      function appendItem(item: Item) {
+        if (!timeline || renderedIds.has(item.id)) return;
+        renderedIds.add(item.id);
+        timeline.append(renderItem(item));
       }
 
       async function loadFeed() {
@@ -253,6 +276,7 @@ const serverUrl = apiUrl || "";
           if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
           const payload = await response.json() as Item[] | Item;
           const items = Array.isArray(payload) ? payload : [payload];
+          renderedIds.clear();
           timeline?.replaceChildren();
           if (itemId) {
             const heading = document.querySelector<HTMLHeadingElement>("#timeline-heading");
@@ -261,7 +285,7 @@ const serverUrl = apiUrl || "";
           if (!items.length) {
             addText(timeline!, "No posts yet. The first voice will make the room.", "rounded-2xl border border-dashed border-line bg-panel p-8 text-sm text-muted");
           } else {
-            items.reverse().forEach((item) => timeline?.append(renderItem(item)));
+            items.reverse().forEach(appendItem);
           }
           if (state) {
             state.textContent = "Live feed";
@@ -274,7 +298,29 @@ const serverUrl = apiUrl || "";
         }
       }
 
-      loadFeed();
+      function connectFirehose() {
+        if (!("WebSocket" in window)) return;
+        const wsOrigin = apiUrl
+          ? apiUrl.replace(/^http/, "ws")
+          : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+        const socketUrl = `${wsOrigin}/firehose`;
+        const socket = new WebSocket(socketUrl);
+        socket.addEventListener("open", () => setStatus(state, "Live feed"));
+        socket.addEventListener("message", (event) => {
+          if (typeof event.data !== "string") return;
+          const separator = event.data.indexOf("\r");
+          if (separator < 1) return;
+          try {
+            const message = JSON.parse(event.data.slice(separator + 1)) as {item?: Item};
+            if (message.item) appendItem(message.item);
+          } catch {
+            // Ignore malformed firehose messages and keep the feed usable.
+          }
+        });
+        socket.addEventListener("close", () => setStatus(state, "Polling feed"));
+      }
+
+      loadFeed().then(connectFirehose);
     </script>
   </body>
 </html>

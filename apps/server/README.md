@@ -10,7 +10,7 @@ npx wrangler d1 migrations apply rss-voice --local --config apps/server/wrangler
 npx wrangler dev --local --config apps/server/wrangler.toml
 ```
 
-The current slice exposes `/health`, recent-item JSON, RSS feeds, the OPML roster, local-development magic links, and authenticated text-post creation. In production set `MAIL_WEBHOOK_URL` to an email service endpoint accepting `{to, screenname, operation, link}`; local requests return a development link directly.
+The current slice exposes `/health`, recent-item JSON, RSS feeds, the OPML roster, local-development magic links, authenticated text-post creation, replies, and the `/firehose` WebSocket. In production set `MAIL_WEBHOOK_URL` to an email service endpoint accepting `{to, screenname, operation, link}`; local requests return a development link directly.
 
 ## Cloudflare
 
