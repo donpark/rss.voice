@@ -112,6 +112,23 @@ body {
   background: var(--ref-bg);
 }
 
+.post-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.5rem 0;
+}
+
+.message-list-mode {
+  max-height: 18.75rem;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.message-full-mode {
+  cursor: pointer;
+}
+
 button,
 a,
 input {

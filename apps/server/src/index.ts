@@ -38,6 +38,7 @@ type PostRow = {
   feed_link: string | null;
   feed_description: string | null;
   avatar_url: string | null;
+  email: string | null;
   title: string | null;
   description: string | null;
   markdowntext: string | null;
@@ -66,7 +67,7 @@ const recentPostsSql = `
          (SELECT COUNT(*) FROM posts replies WHERE replies.tenant_id = p.tenant_id AND replies.in_reply_to = p.id AND replies.deleted_at IS NULL) AS ct_replies,
          (SELECT COUNT(*) FROM likes post_likes WHERE post_likes.tenant_id = p.tenant_id AND post_likes.post_id = p.id) AS ct_likes,
          p.published_at, u.display_name AS author_name, u.feed_title,
-         u.feed_link, u.feed_description, u.avatar_url
+         u.feed_link, u.feed_description, u.avatar_url, u.email
   FROM posts p
   LEFT JOIN users u ON u.tenant_id = p.tenant_id AND u.screenname = p.author
   WHERE p.tenant_id = ? AND p.deleted_at IS NULL
@@ -142,7 +143,10 @@ function feedUrl(base: string, screenname: string): string {
   return `${base}/users/${encodeURIComponent(screenname)}/rss.xml`;
 }
 
-function postFromRow(row: PostRow, base: string): Post {
+async function postFromRow(row: PostRow, base: string): Promise<Post> {
+  const avatarUrl = row.avatar_url ?? (row.email
+    ? `https://www.gravatar.com/avatar/${[...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(row.email.trim().toLowerCase())))].map((byte) => byte.toString(16).padStart(2, "0")).join("")}?d=identicon`
+    : undefined);
   const rawDate = row.published_at.includes("T") ? row.published_at : `${row.published_at.replace(" ", "T")}Z`;
   const parsedDate = new Date(rawDate);
   const post: Post = {
@@ -153,7 +157,10 @@ function postFromRow(row: PostRow, base: string): Post {
     pubDate: Number.isNaN(parsedDate.valueOf()) ? row.published_at : parsedDate.toISOString(),
   };
 
-  if (row.author_name) post.authorName = row.author_name;
+  const authorName = row.author_name && row.author_name !== row.author ? row.author_name : row.feed_title ?? row.author_name;
+  if (authorName) post.authorName = authorName;
+  if (avatarUrl) post.avatarUrl = avatarUrl;
+  if (row.feed_description) post.feedDescription = row.feed_description;
   if (row.title) post.title = row.title;
   if (row.description) post.description = row.description;
   if (row.markdowntext) post.markdowntext = row.markdowntext;
@@ -223,7 +230,7 @@ async function postAndReplies(env: Env, tenantId: string, id: number): Promise<P
 async function thread(env: Env, tenantId: string, id: number, base: string, depth = 0): Promise<Post | null> {
   const row = await post(env, tenantId, id);
   if (!row) return null;
-  const item = postFromRow(row, base);
+  const item = await postFromRow(row, base);
   if (depth >= 50) return item;
   // ponytail: one query per thread node; batch the subtree if deep threads matter.
   const children = await env.DB.prepare(`${recentPostsSql} AND p.in_reply_to = ? ORDER BY p.published_at ASC`)
@@ -256,7 +263,7 @@ async function members(env: Env, tenantId: string, base: string): Promise<Member
 async function itemResponse(request: Request, env: Env, id: number): Promise<Response> {
   const row = await post(env, env.TENANT_ID, id);
   if (!row) return text("No post with that id.", "text/plain", 404);
-  return json(jsonPost(postFromRow(row, baseUrl(request, env))));
+  return json(jsonPost(await postFromRow(row, baseUrl(request, env))));
 }
 
 async function feedResponse(request: Request, env: Env, screenname: string): Promise<Response> {
@@ -264,8 +271,8 @@ async function feedResponse(request: Request, env: Env, screenname: string): Pro
   const account = await user(env, env.TENANT_ID, screenname);
   if (!account) return text("No member with that screenname.", "text/plain", 404);
 
-  const items = (await recentPosts(env, env.TENANT_ID, 100, screenname))
-    .map((row) => postFromRow(row, base));
+  const items = await Promise.all((await recentPosts(env, env.TENANT_ID, 100, screenname))
+    .map((row) => postFromRow(row, base)));
   const selfUrl = feedUrl(base, screenname);
   const xml = buildRssFeed({
     title: account.feed_title ?? account.display_name ?? screenname,
@@ -279,7 +286,7 @@ async function feedResponse(request: Request, env: Env, screenname: string): Pro
 
 async function everyoneFeedResponse(request: Request, env: Env): Promise<Response> {
   const base = baseUrl(request, env);
-  const items = (await recentPosts(env, env.TENANT_ID, 100)).map((row) => postFromRow(row, base));
+  const items = await Promise.all((await recentPosts(env, env.TENANT_ID, 100)).map((row) => postFromRow(row, base)));
   const selfUrl = `${base}/users/rss.xml`;
   const xml = buildRssFeed({
     title: `${env.INSTANCE_NAME}: everyone`,
@@ -605,7 +612,7 @@ async function createPost(request: Request, env: Env): Promise<Response> {
   const id = Number(result.meta.last_row_id);
   const row = await post(env, env.TENANT_ID, id);
   if (!row) return text("The post was created but could not be read back.", "text/plain", 500);
-  const item = jsonPost(postFromRow(row, baseUrl(request, env)));
+  const item = jsonPost(await postFromRow(row, baseUrl(request, env)));
   await broadcast(env, "newItem", item);
   return json(item);
 }
@@ -643,7 +650,7 @@ async function updatePost(request: Request, env: Env): Promise<Response> {
   ).run();
   const updated = await post(env, env.TENANT_ID, id);
   if (!updated) return text("The post was updated but could not be read back.", "text/plain", 500);
-  const item = jsonPost(postFromRow(updated, baseUrl(request, env)));
+  const item = jsonPost(await postFromRow(updated, baseUrl(request, env)));
   await broadcast(env, "updatedItem", item);
   return json(item);
 }
@@ -684,7 +691,7 @@ async function toggleLike(request: Request, env: Env): Promise<Response> {
   }
   const current = await post(env, env.TENANT_ID, id);
   if (!current) return text("The post disappeared.", "text/plain", 404);
-  const item = postFromRow(current, baseUrl(request, env));
+  const item = await postFromRow(current, baseUrl(request, env));
   item.flLiked = liked;
   const output = jsonPost(item);
   await broadcast(env, "updatedItem", output);
@@ -745,7 +752,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (path === "/getitemandreplies") {
     const id = Number(url.searchParams.get("idparent"));
     if (!Number.isInteger(id) || id < 1) return text("A numeric idparent is required.", "text/plain", 400);
-    const items = (await postAndReplies(env, env.TENANT_ID, id)).map((row) => jsonPost(postFromRow(row, base)));
+    const items = await Promise.all((await postAndReplies(env, env.TENANT_ID, id)).map(async (row) => jsonPost(await postFromRow(row, base))));
     return json(items);
   }
   if (path === "/getthread") {
@@ -755,15 +762,15 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return item ? json(jsonPost(item)) : text("No post with that id.", "text/plain", 404);
   }
   if (path === "/getrecentitems") {
-    const items = (await recentPosts(env, env.TENANT_ID, limit(url.searchParams.get("ct"))))
-      .map((row) => jsonPost(postFromRow(row, base)));
+    const items = await Promise.all((await recentPosts(env, env.TENANT_ID, limit(url.searchParams.get("ct"))))
+      .map(async (row) => jsonPost(await postFromRow(row, base))));
     return json(items);
   }
   if (path === "/getrecentuseritems") {
     const screenname = url.searchParams.get("name");
     if (!screenname) return text("The name parameter is required.", "text/plain", 400);
-    const items = (await recentPosts(env, env.TENANT_ID, 100, screenname))
-      .map((row) => jsonPost(postFromRow(row, base)));
+    const items = await Promise.all((await recentPosts(env, env.TENANT_ID, 100, screenname))
+      .map(async (row) => jsonPost(await postFromRow(row, base))));
     return json(items);
   }
   if (path === "/feed") {

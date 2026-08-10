@@ -118,6 +118,8 @@ const serverUrl = apiUrl || "";
         id: number;
         author?: string;
         screenname?: string;
+        avatarUrl?: string;
+        feedDescription?: string;
         description?: string;
         markdowntext?: string;
         title?: string;
@@ -425,21 +427,62 @@ const serverUrl = apiUrl || "";
         parent.append(element);
       }
 
+      function addMarkdown(parent: HTMLElement, markdown: string | undefined, className = "") {
+        if (!markdown) return;
+        const element = document.createElement("p");
+        element.className = className;
+        const image = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)(?:\s+"[^"]*")?\)/g;
+        let cursor = 0;
+        for (const match of markdown.matchAll(image)) {
+          element.append(document.createTextNode(markdown.slice(cursor, match.index)));
+          const img = document.createElement("img");
+          img.src = match[2];
+          img.alt = match[1];
+          img.loading = "lazy";
+          img.decoding = "async";
+          img.className = "post-image";
+          element.append(img);
+          cursor = (match.index ?? 0) + match[0].length;
+        }
+        element.append(document.createTextNode(markdown.slice(cursor)));
+        parent.append(element);
+      }
+
       function renderItem(item: Item) {
         const article = document.createElement("article");
         const mine = session?.screenname === item.screenname;
-        article.className = "group w-full border-b border-ref-line bg-ref-bg px-4 py-3";
+        article.className = "group message-list-mode w-full border-b border-ref-line bg-ref-bg px-4 py-3";
+        article.setAttribute("aria-expanded", "false");
+        article.addEventListener("click", (event) => {
+          const target = event.target;
+          if (target instanceof Element && target.closest("button, a, audio")) return;
+          const expanded = article.classList.toggle("message-full-mode");
+          article.classList.toggle("message-list-mode", !expanded);
+          article.setAttribute("aria-expanded", String(expanded));
+        });
         const identity = document.createElement("div");
         identity.className = "flex items-center gap-2";
+        if (item.screenname) {
+          identity.title = `@${item.screenname} - ${item.feedDescription ?? ""}`;
+        }
         const avatar = document.createElement("div");
         avatar.className = "flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-300 text-sm font-bold text-white";
-        avatar.textContent = (item.author ?? item.screenname ?? "?").slice(0, 1).toUpperCase();
+        if (item.avatarUrl) {
+          const image = document.createElement("img");
+          image.src = item.avatarUrl;
+          image.alt = "";
+          image.loading = "lazy";
+          image.className = "h-full w-full rounded-full object-cover";
+          avatar.append(image);
+        } else {
+          avatar.textContent = (item.author ?? item.screenname ?? "?").slice(0, 1).toUpperCase();
+        }
         identity.append(avatar);
         addText(identity, item.author ?? item.screenname ?? "Unknown member", `text-sm font-bold ${mine ? "text-ref-blue" : "text-ref-strong"}`);
         addText(identity, `· ${new Date(item.pubDate).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}`, "text-sm text-ref-muted");
         article.append(identity);
         addText(article, item.title, "ml-14 mt-0.5 font-semibold");
-        addText(article, item.markdowntext ?? item.description?.replace(/<[^>]+>/g, ""), "ml-14 mt-2 whitespace-pre-wrap text-[0.98rem] leading-6 text-ref-strong");
+        addMarkdown(article, item.markdowntext ?? item.description?.replace(/<[^>]+>/g, ""), "ml-14 mt-2 whitespace-pre-wrap text-[0.98rem] leading-6 text-ref-strong");
 
         if (item.enclosureUrl && item.enclosureType?.startsWith("audio/")) {
           const audio = document.createElement("audio");

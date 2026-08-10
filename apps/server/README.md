@@ -18,6 +18,8 @@ TEST_SERVER_URL=http://127.0.0.1:8787 npm --workspace @rss-voice/server run test
 
 The current slice exposes `/health`, recent-item JSON, RSS feeds, the OPML roster, local-development magic links, authenticated text and voice-post creation, direct and recursive replies (`/getitemandreplies`, `/getthread`), editing, deletion, likes, media upload/download/delete, and the `/firehose` WebSocket. In production set `MAIL_WEBHOOK_URL` to an email service endpoint accepting `{to, screenname, operation, link}`; local requests return a development link directly.
 
+For local end-to-end data matching the public reference server, see `fixtures/rss-chat/README.md`. The fixture generator downloads `/data/subs.opml` and `/users/rss.xml`, then writes an idempotent D1 seed file. The Worker serves the compatible `/data/subs.opml`, `/users/rss.xml`, and `/users/<username>/rss.xml` resources from that data.
+
 ## Cloudflare
 
 Create the D1 database and R2 media bucket, replace `database_id`, `BASE_URL`, and `WEB_URL` in `wrangler.toml`, then apply migrations and deploy:

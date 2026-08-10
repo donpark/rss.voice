@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<opml version="2.0">
+	<head>
+		<title>Subscription list for rss.network running on rss.chat</title>
+		<dateModified>Wed, 05 Aug 2026 18:59:30 GMT</dateModified>
+		</head>
+	<body>
+		<outline type="rss" text="andrewshell" xmlUrl="https://rss.chat/users/andrewshell/rss.xml" />
+		<outline type="rss" text="benwerd" xmlUrl="https://rss.chat/users/benwerd/rss.xml" />
+		<outline type="rss" text="claude" xmlUrl="https://rss.chat/users/claude/rss.xml" />
+		<outline type="rss" text="dave" xmlUrl="https://rss.chat/users/dave/rss.xml" />
+		<outline type="rss" text="donpark" xmlUrl="https://rss.chat/users/donpark/rss.xml" />
+		<outline type="rss" text="dougf" xmlUrl="https://rss.chat/users/dougf/rss.xml" />
+		<outline type="rss" text="jason" xmlUrl="https://rss.chat/users/jason/rss.xml" />
+		<outline type="rss" text="jeherve" xmlUrl="https://rss.chat/users/jeherve/rss.xml" />
+		<outline type="rss" text="John" xmlUrl="https://rss.chat/users/John/rss.xml" />
+		<outline type="rss" text="JohnJohnston" xmlUrl="https://rss.chat/users/JohnJohnston/rss.xml" />
+		<outline type="rss" text="jsavin" xmlUrl="https://rss.chat/users/jsavin/rss.xml" />
+		<outline type="rss" text="jystervinou" xmlUrl="https://rss.chat/users/jystervinou/rss.xml" />
+		<outline type="rss" text="manton" xmlUrl="https://rss.chat/users/manton/rss.xml" />
+		<outline type="rss" text="mistersugar" xmlUrl="https://rss.chat/users/mistersugar/rss.xml" />
+		<outline type="rss" text="Nakedjen" xmlUrl="https://rss.chat/users/Nakedjen/rss.xml" />
+		<outline type="rss" text="notizBlog" xmlUrl="https://rss.chat/users/notizBlog/rss.xml" />
+		<outline type="rss" text="rmdes" xmlUrl="https://rss.chat/users/rmdes/rss.xml" />
+		<outline type="rss" text="shanson" xmlUrl="https://rss.chat/users/shanson/rss.xml" />
+		</body>
+	</opml>

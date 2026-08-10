@@ -3,6 +3,8 @@ export type Post = {
   tenantId?: string;
   author: string;
   authorName?: string;
+  avatarUrl?: string;
+  feedDescription?: string;
   feedUrl: string;
   title?: string;
   description?: string;
@@ -115,6 +117,8 @@ export function jsonPost(post: Post): Record<string, unknown> {
     pubDate: post.pubDate,
     author: post.authorName ?? post.author,
     screenname: post.author,
+    avatarUrl: post.avatarUrl,
+    feedDescription: post.feedDescription,
     feedUrl: post.feedUrl,
     inReplyToNum: post.inReplyToNum,
     inReplyToUrl: post.inReplyToUrl,
