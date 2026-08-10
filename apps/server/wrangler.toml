@@ -6,6 +6,7 @@ compatibility_date = "2026-08-08"
 INSTANCE_NAME = "rss.voice"
 TENANT_ID = "default"
 BASE_URL = "http://127.0.0.1:8787"
+WEB_URL = "http://127.0.0.1:4321"
 
 [[d1_databases]]
 binding = "DB"
@@ -25,3 +26,6 @@ bindings = [
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Firehose"]
+
+[[migrations]]
+tag = "v2"

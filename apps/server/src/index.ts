@@ -15,6 +15,9 @@ export interface Env {
   INSTANCE_NAME: string;
   TENANT_ID: string;
   BASE_URL?: string;
+  WEB_URL?: string;
+  MAIL_WEBHOOK_URL?: string;
+  DEV_MODE?: string;
 }
 
 type PostRow = {
@@ -69,6 +72,49 @@ function json(data: unknown, status = 200): Response {
 
 function text(data: string, contentType: string, status = 200): Response {
   return new Response(data, {status, headers: headers(contentType)});
+}
+
+function redirect(location: string): Response {
+  return new Response(null, {status: 302, headers: new Headers({location})});
+}
+
+function htmlEscape(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function markdownToHtml(value: string): string {
+  const escaped = htmlEscape(value.trim());
+  const inline = escaped
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>");
+  return `<p>${inline.replaceAll("\n", "<br />")}</p>`;
+}
+
+function randomCode(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+
+async function hashCode(code: string): Promise<string> {
+  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(code));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function validScreenname(value: string): boolean {
+  return /^[a-zA-Z][a-zA-Z0-9_-]{1,31}$/.test(value);
+}
+
+function authParams(url: URL): {email?: string; code?: string} {
+  return {
+    email: url.searchParams.get("emailaddress") ?? url.searchParams.get("email") ?? undefined,
+    code: url.searchParams.get("emailcode") ?? url.searchParams.get("code") ?? undefined,
+  };
 }
 
 function baseUrl(request: Request, env: Env): string {
@@ -180,6 +226,173 @@ async function everyoneFeedResponse(request: Request, env: Env): Promise<Respons
   return text(xml, "application/rss+xml");
 }
 
+async function userByEmail(env: Env, email: string): Promise<{screenname: string; email: string; email_secret_hash: string | null; confirmed_at: string | null} | null> {
+  return env.DB.prepare(
+    "SELECT screenname, email, email_secret_hash, confirmed_at FROM users WHERE tenant_id = ? AND email = ?",
+  ).bind(env.TENANT_ID, email).first();
+}
+
+function mailIsConfigured(request: Request, env: Env): boolean {
+  return Boolean(env.MAIL_WEBHOOK_URL || env.DEV_MODE === "true" || ["localhost", "127.0.0.1"].includes(new URL(request.url).hostname));
+}
+
+function redirectTarget(request: Request, env: Env, value: string | null): string {
+  const base = baseUrl(request, env);
+  if (!value) return `${env.WEB_URL?.replace(/\/$/, "") ?? base}/`;
+  try {
+    const target = new URL(value);
+    const allowedOrigins = [new URL(base).origin];
+    if (env.WEB_URL) allowedOrigins.push(new URL(env.WEB_URL).origin);
+    return allowedOrigins.includes(target.origin) ? target.toString() : `${base}/`;
+  } catch {
+    return `${base}/`;
+  }
+}
+
+async function deliverMagicLink(
+  request: Request,
+  env: Env,
+  email: string,
+  screenname: string,
+  code: string,
+  urlredirect: string | null,
+  operation: string,
+): Promise<Response> {
+  const link = new URL("/auth/confirm", baseUrl(request, env));
+  link.searchParams.set("email", email);
+  link.searchParams.set("code", code);
+  link.searchParams.set("screenname", screenname);
+  link.searchParams.set("urlredirect", redirectTarget(request, env, urlredirect));
+
+  if (env.MAIL_WEBHOOK_URL) {
+    const response = await fetch(env.MAIL_WEBHOOK_URL, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({to: email, screenname, operation, link: link.toString()}),
+    });
+    if (!response.ok) return text("The confirmation email could not be sent.", "text/plain", 502);
+    return json({ok: true});
+  }
+  if (env.DEV_MODE === "true" || ["localhost", "127.0.0.1"].includes(new URL(request.url).hostname)) {
+    return json({ok: true, devMagicLink: link.toString()});
+  }
+  return text("Mail delivery is not configured.", "text/plain", 503);
+}
+
+async function createOrUpdateConfirmation(request: Request, env: Env, create: boolean): Promise<Response> {
+  const url = new URL(request.url);
+  const email = url.searchParams.get("email")?.trim().toLowerCase();
+  const requestedName = url.searchParams.get("name")?.trim();
+  if (!email || !email.includes("@")) return text("A valid email is required.", "text/plain", 400);
+  if (!mailIsConfigured(request, env)) return text("Mail delivery is not configured.", "text/plain", 503);
+
+  let screenname = requestedName;
+  if (!screenname) screenname = email.split("@", 1)[0].replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
+  if (!screenname || !validScreenname(screenname)) return text("The screenname is invalid.", "text/plain", 400);
+
+  const existingByEmail = await userByEmail(env, email);
+  const existingByName = await user(env, env.TENANT_ID, screenname);
+  if (create && (existingByEmail || existingByName)) return text("That account already exists.", "text/plain", 409);
+  if (!create && !existingByEmail) return text("No account exists for that email.", "text/plain", 404);
+
+  const code = randomCode();
+  const secretHash = await hashCode(code);
+  if (create) {
+    await env.DB.prepare(`
+      INSERT INTO users (tenant_id, screenname, email, email_secret_hash)
+      VALUES (?, ?, ?, ?)
+    `).bind(env.TENANT_ID, screenname, email, secretHash).run();
+  } else {
+    await env.DB.prepare(
+      "UPDATE users SET email_secret_hash = ?, confirmed_at = NULL, updated_at = ? WHERE tenant_id = ? AND email = ?",
+    ).bind(secretHash, new Date().toISOString(), env.TENANT_ID, email).run();
+    screenname = existingByEmail!.screenname;
+  }
+  return deliverMagicLink(request, env, email, screenname, code, url.searchParams.get("urlredirect"), create ? "create an account" : "sign in");
+}
+
+async function confirmMagicLink(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const email = url.searchParams.get("email")?.trim().toLowerCase();
+  const code = url.searchParams.get("code");
+  const screenname = url.searchParams.get("screenname");
+  if (!email || !code || !screenname) return text("The confirmation link is incomplete.", "text/plain", 400);
+  const account = await userByEmail(env, email);
+  if (!account || account.screenname !== screenname || account.email_secret_hash !== await hashCode(code)) {
+    return text("The confirmation link is invalid.", "text/plain", 403);
+  }
+  await env.DB.prepare(
+    "UPDATE users SET confirmed_at = ?, updated_at = ? WHERE tenant_id = ? AND email = ?",
+  ).bind(new Date().toISOString(), new Date().toISOString(), env.TENANT_ID, email).run();
+  const target = new URL(redirectTarget(request, env, url.searchParams.get("urlredirect")));
+  target.searchParams.set("emailconfirmed", "true");
+  target.searchParams.set("email", email);
+  target.searchParams.set("code", code);
+  target.searchParams.set("screenname", screenname);
+  return redirect(target.toString());
+}
+
+async function authenticate(env: Env, url: URL): Promise<{screenname: string} | null> {
+  const {email, code} = authParams(url);
+  if (!email || !code) return null;
+  const account = await userByEmail(env, email.toLowerCase());
+  if (!account || !account.confirmed_at || !account.email_secret_hash || account.email_secret_hash !== await hashCode(code)) return null;
+  return {screenname: account.screenname};
+}
+
+async function broadcast(env: Env, verb: string, item: Record<string, unknown>): Promise<void> {
+  const id = env.FIREHOSE.idFromName(env.TENANT_ID);
+  const stub = env.FIREHOSE.get(id) as DurableObjectStub & {broadcast(message: string): Promise<void>};
+  try {
+    await stub.broadcast(`${verb}\r${JSON.stringify({item})}`);
+  } catch {
+    // A disconnected firehose must not make a successful post fail.
+  }
+}
+
+async function createPost(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const account = await authenticate(env, url);
+  if (!account) return text("The authorization code is not correct.", "text/plain", 403);
+
+  const raw = url.searchParams.get("jsontext") ?? await request.text();
+  if (!raw || raw.length > 100_000) return text("The post is missing or too large.", "text/plain", 400);
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return text("The post does not contain valid JSON.", "text/plain", 400);
+  }
+
+  const source = typeof payload.markdowntext === "string" ? payload.markdowntext : typeof payload.description === "string" ? payload.description : "";
+  if (!source.trim()) return text("The post has no text.", "text/plain", 400);
+  const inReplyTo = payload.inReplyTo ?? payload.inReplyToNum;
+  const replyId = inReplyTo === undefined || inReplyTo === null ? null : Number(inReplyTo);
+  if (replyId !== null && (!Number.isInteger(replyId) || replyId < 1)) return text("The reply target is invalid.", "text/plain", 400);
+  if (replyId !== null && !(await post(env, env.TENANT_ID, replyId))) return text("The reply target does not exist.", "text/plain", 400);
+
+  const result = await env.DB.prepare(`
+    INSERT INTO posts (tenant_id, author, title, description, markdowntext, link, in_reply_to, published_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    env.TENANT_ID,
+    account.screenname,
+    typeof payload.title === "string" ? payload.title.slice(0, 500) : null,
+    markdownToHtml(source),
+    source,
+    typeof payload.link === "string" ? payload.link : null,
+    replyId,
+    new Date().toISOString(),
+    new Date().toISOString(),
+  ).run();
+  const id = Number(result.meta.last_row_id);
+  const row = await post(env, env.TENANT_ID, id);
+  if (!row) return text("The post was created but could not be read back.", "text/plain", 500);
+  const item = jsonPost(postFromRow(row, baseUrl(request, env)));
+  await broadcast(env, "newItem", item);
+  return json(item);
+}
+
 async function handle(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -192,6 +405,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
       "access-control-allow-headers": "content-type",
     })});
   }
+  if (request.method === "GET" && path === "/auth/confirm") return confirmMagicLink(request, env);
+  if (request.method === "GET" && path === "/createnewuser") return createOrUpdateConfirmation(request, env, true);
+  if (request.method === "GET" && path === "/sendconfirmingemail") return createOrUpdateConfirmation(request, env, false);
+  if (request.method === "POST" && path === "/newpost") return createPost(request, env);
   if (request.method !== "GET") return text("Method not allowed.", "text/plain", 405);
 
   if (path === "/") {

@@ -10,11 +10,11 @@ npx wrangler d1 migrations apply rss-voice --local --config apps/server/wrangler
 npx wrangler dev --local --config apps/server/wrangler.toml
 ```
 
-The first vertical slice exposes `/health`, recent-item JSON, RSS feeds, and the OPML roster.
+The current slice exposes `/health`, recent-item JSON, RSS feeds, the OPML roster, local-development magic links, and authenticated text-post creation. In production set `MAIL_WEBHOOK_URL` to an email service endpoint accepting `{to, screenname, operation, link}`; local requests return a development link directly.
 
 ## Cloudflare
 
-Create the D1 database and R2 media bucket, replace `database_id` and `BASE_URL` in `wrangler.toml`, then apply migrations and deploy:
+Create the D1 database and R2 media bucket, replace `database_id`, `BASE_URL`, and `WEB_URL` in `wrangler.toml`, then apply migrations and deploy:
 
 ```sh
 npx wrangler d1 create rss-voice
