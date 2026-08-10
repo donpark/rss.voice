@@ -194,6 +194,25 @@ async function postAndReplies(env: Env, tenantId: string, id: number): Promise<P
   return result.results;
 }
 
+async function thread(env: Env, tenantId: string, id: number, base: string, depth = 0): Promise<Post | null> {
+  const row = await post(env, tenantId, id);
+  if (!row) return null;
+  const item = postFromRow(row, base);
+  if (depth >= 50) return item;
+  // ponytail: one query per thread node; batch the subtree if deep threads matter.
+  const children = await env.DB.prepare(`${recentPostsSql} AND p.in_reply_to = ? ORDER BY p.published_at ASC`)
+    .bind(tenantId, id)
+    .all<PostRow>();
+  if (children.results.length) {
+    item.replies = [];
+    for (const child of children.results) {
+      const reply = await thread(env, tenantId, child.id, base, depth + 1);
+      if (reply) item.replies.push(reply);
+    }
+  }
+  return item;
+}
+
 async function user(env: Env, tenantId: string, screenname: string): Promise<UserRow | null> {
   return env.DB.prepare(`
     SELECT screenname, display_name, feed_title, feed_link, feed_description, avatar_url
@@ -639,6 +658,12 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (!Number.isInteger(id) || id < 1) return text("A numeric idparent is required.", "text/plain", 400);
     const items = (await postAndReplies(env, env.TENANT_ID, id)).map((row) => jsonPost(postFromRow(row, base)));
     return json(items);
+  }
+  if (path === "/getthread") {
+    const id = Number(url.searchParams.get("id"));
+    if (!Number.isInteger(id) || id < 1) return text("A numeric id is required.", "text/plain", 400);
+    const item = await thread(env, env.TENANT_ID, id, base);
+    return item ? json(jsonPost(item)) : text("No post with that id.", "text/plain", 404);
   }
   if (path === "/getrecentitems") {
     const items = (await recentPosts(env, env.TENANT_ID, limit(url.searchParams.get("ct"))))

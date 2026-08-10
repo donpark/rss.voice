@@ -19,6 +19,7 @@ export type Post = {
   ctLikes?: number;
   flLiked?: boolean;
   deleted?: boolean;
+  replies?: Post[];
 };
 
 export type Member = {
@@ -124,5 +125,6 @@ export function jsonPost(post: Post): Record<string, unknown> {
     ctLikes: post.ctLikes,
     flLiked: post.flLiked,
     deleted: post.deleted,
+    replies: post.replies?.map(jsonPost),
   }).filter(([, value]) => value !== undefined));
 }
