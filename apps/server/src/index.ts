@@ -7,7 +7,7 @@ import {
   type Member,
   type Post,
 } from "@rss-voice/protocol";
-import {deleteMediaObject, getMedia, putMedia} from "./object-store";
+import {deleteMediaObject, getMedia, putMedia, type MediaRange} from "./object-store";
 
 export interface Env {
   DB: D1Database;
@@ -25,6 +25,7 @@ export interface Env {
   MEDIA_S3_SECRET_ACCESS_KEY?: string;
   MEDIA_S3_REGION?: string;
   MAX_MEDIA_UPLOAD_BYTES?: string;
+  AUTH_RATE_LIMIT?: string;
 }
 
 type PostRow = {
@@ -170,6 +171,22 @@ function postFromRow(row: PostRow, base: string): Post {
 function limit(value: string | null): number {
   const parsed = Number(value ?? 100);
   return Number.isInteger(parsed) && parsed > 0 ? Math.min(parsed, 100) : 100;
+}
+
+async function withinRateLimit(env: Env, key: string): Promise<boolean> {
+  const configured = Number(env.AUTH_RATE_LIMIT ?? 5);
+  const max = Number.isInteger(configured) && configured > 0 ? configured : 5;
+  const windowStarted = Math.floor(Date.now() / 900_000) * 900_000;
+  await env.DB.prepare(`
+    INSERT INTO rate_limits (tenant_id, rate_key, window_started, request_count)
+    VALUES (?, ?, ?, 1)
+    ON CONFLICT (tenant_id, rate_key) DO UPDATE SET
+      request_count = CASE WHEN window_started = ? THEN request_count + 1 ELSE 1 END,
+      window_started = CASE WHEN window_started = ? THEN window_started ELSE ? END
+  `).bind(env.TENANT_ID, key, windowStarted, windowStarted, windowStarted, windowStarted).run();
+  const row = await env.DB.prepare("SELECT request_count FROM rate_limits WHERE tenant_id = ? AND rate_key = ?")
+    .bind(env.TENANT_ID, key).first<{request_count: number}>();
+  return (row?.request_count ?? max + 1) <= max;
 }
 
 async function recentPosts(env: Env, tenantId: string, max: number, author?: string): Promise<PostRow[]> {
@@ -412,6 +429,20 @@ function mediaTypeAllowed(type: string): boolean {
   return type.startsWith("audio/") || type.startsWith("image/");
 }
 
+function parseMediaRange(value: string | null, size: number): MediaRange | null | false {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || (!match[1] && !match[2])) return false;
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    return Number.isInteger(suffix) && suffix > 0 ? {start: Math.max(0, size - suffix), end: size - 1, total: size} : false;
+  }
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isInteger(start) || !Number.isInteger(requestedEnd) || start < 0 || start >= size || requestedEnd < start) return false;
+  return {start, end: Math.min(requestedEnd, size - 1), total: size};
+}
+
 async function uploadMedia(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const account = await authenticate(env, url);
@@ -449,20 +480,23 @@ async function uploadMedia(request: Request, env: Env): Promise<Response> {
   return json({url: `${baseUrl(request, env)}/media/${id}`, id, type, size: bytes.byteLength});
 }
 
-async function serveMedia(env: Env, id: number): Promise<Response> {
+async function serveMedia(request: Request, env: Env, id: number): Promise<Response> {
   const media = await env.DB.prepare(
     "SELECT id, tenant_id, owner, object_key, content_type, size FROM media WHERE tenant_id = ? AND id = ?",
   ).bind(env.TENANT_ID, id).first<MediaRow>();
   if (!media) return text("No media item with that id.", "text/plain", 404);
-  const object = await getMedia(env, media.object_key);
+  const range = parseMediaRange(request.headers.get("range"), media.size);
+  if (range === false) return new Response(null, {status: 416, headers: new Headers({"content-range": `bytes */${media.size}`})});
+  const object = await getMedia(env, media.object_key, range ?? undefined);
   if (!object) return text("The media object is missing.", "text/plain", 404);
   const responseHeaders = new Headers(object.headers);
   responseHeaders.set("content-type", media.content_type);
-  responseHeaders.set("content-length", String(media.size));
+  responseHeaders.set("content-length", String(range ? range.end - range.start + 1 : media.size));
   responseHeaders.set("access-control-allow-origin", "*");
   responseHeaders.set("accept-ranges", "bytes");
+  if (range) responseHeaders.set("content-range", `bytes ${range.start}-${range.end}/${media.size}`);
   responseHeaders.set("cache-control", "public, max-age=31536000, immutable");
-  return new Response(object.body, {headers: responseHeaders});
+  return new Response(request.method === "HEAD" ? null : object.body, {status: range ? 206 : 200, headers: responseHeaders});
 }
 
 async function deleteMedia(request: Request, env: Env): Promise<Response> {
@@ -628,9 +662,18 @@ async function handle(request: Request, env: Env): Promise<Response> {
       "access-control-allow-headers": "content-type",
     })});
   }
-  if (request.method === "GET" && path === "/auth/confirm") return confirmMagicLink(request, env);
-  if (request.method === "GET" && path === "/createnewuser") return createOrUpdateConfirmation(request, env, true);
-  if (request.method === "GET" && path === "/sendconfirmingemail") return createOrUpdateConfirmation(request, env, false);
+  if (request.method === "GET" && path === "/auth/confirm") {
+    const email = url.searchParams.get("email")?.toLowerCase() ?? "unknown";
+    const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+    if (!(await withinRateLimit(env, `confirm:${ip}:${email}`))) return new Response("Too many confirmation attempts.", {status: 429, headers: new Headers({"retry-after": "900"})});
+    return confirmMagicLink(request, env);
+  }
+  if (request.method === "GET" && (path === "/createnewuser" || path === "/sendconfirmingemail")) {
+    const email = (url.searchParams.get("email") ?? "unknown").toLowerCase();
+    const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+    if (!(await withinRateLimit(env, `request:${ip}:${email}`))) return new Response("Too many sign-in requests.", {status: 429, headers: new Headers({"retry-after": "900"})});
+    return createOrUpdateConfirmation(request, env, path === "/createnewuser");
+  }
   if (request.method === "POST" && path === "/newpost") return createPost(request, env);
   if (request.method === "POST" && path === "/updatepost") return updatePost(request, env);
   if (request.method === "POST" && path === "/deletepost") return deletePost(request, env);
@@ -638,7 +681,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && path === "/uploadmedia") return uploadMedia(request, env);
   if (request.method === "POST" && path === "/deletemedia") return deleteMedia(request, env);
   const mediaMatch = path.match(/^\/media\/(\d+)$/);
-  if (request.method === "GET" && mediaMatch) return serveMedia(env, Number(mediaMatch[1]));
+  if ((request.method === "GET" || request.method === "HEAD") && mediaMatch) return serveMedia(request, env, Number(mediaMatch[1]));
   if (request.method !== "GET") return text("Method not allowed.", "text/plain", 405);
 
   if (path === "/") {

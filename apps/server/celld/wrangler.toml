@@ -8,6 +8,7 @@ TENANT_ID = "default"
 BASE_URL = "http://127.0.0.1:8780"
 WEB_URL = "http://127.0.0.1:4321"
 MAX_MEDIA_UPLOAD_BYTES = "2097152"
+AUTH_RATE_LIMIT = "5"
 
 # celld provides the D1/Durable Object-compatible stateful primitives.
 [[d1_databases]]
@@ -27,3 +28,6 @@ new_sqlite_classes = ["Firehose"]
 
 [[migrations]]
 tag = "v2"
+
+[[migrations]]
+tag = "v3"

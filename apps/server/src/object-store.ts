@@ -45,17 +45,22 @@ export async function putMedia(env: MediaEnvironment, key: string, bytes: ArrayB
   if (!response.ok) throw new Error(`Media upload failed (${response.status}).`);
 }
 
-export async function getMedia(env: MediaEnvironment, key: string): Promise<Response | null> {
+export type MediaRange = {start: number; end: number; total: number};
+
+export async function getMedia(env: MediaEnvironment, key: string, range?: MediaRange): Promise<Response | null> {
   if (env.MEDIA) {
-    const object = await env.MEDIA.get(key);
+    const object = await env.MEDIA.get(key, range ? {range: {offset: range.start, length: range.end - range.start + 1}} : undefined);
     if (!object) return null;
     const responseHeaders = new Headers();
     if (object.httpMetadata?.contentType) responseHeaders.set("content-type", object.httpMetadata.contentType);
     responseHeaders.set("content-length", String(object.size));
-    return new Response(object.body, {headers: responseHeaders});
+    if (range) responseHeaders.set("content-range", `bytes ${range.start}-${range.end}/${range.total}`);
+    return new Response(object.body, {status: range ? 206 : 200, headers: responseHeaders});
   }
   const config = s3Config(env);
-  const response = await config.client.fetch(s3Url(config.endpoint, config.bucket, key));
+  const response = await config.client.fetch(s3Url(config.endpoint, config.bucket, key), {
+    headers: range ? {range: `bytes=${range.start}-${range.end}`} : undefined,
+  });
   return response.status === 404 ? null : response;
 }
 

@@ -33,7 +33,7 @@ The `celld/` Wrangler project deliberately omits the Cloudflare R2 binding. cell
 - `MEDIA_S3_ACCESS_KEY_ID`
 - `MEDIA_S3_SECRET_ACCESS_KEY`
 
-The default upload limit is 2 MiB (`MAX_MEDIA_UPLOAD_BYTES`) and supports audio and image MIME types. Uploaded objects are tenant-prefixed and served through `/media/<id>`.
+The default upload limit is 2 MiB (`MAX_MEDIA_UPLOAD_BYTES`) and supports audio and image MIME types. Uploaded objects are tenant-prefixed and served through `/media/<id>`, including byte ranges and `HEAD` requests. Magic-link requests and confirmations are rate-limited to 5 per 15 minutes by default (`AUTH_RATE_LIMIT`).
 
 ```sh
 celld deploy apps/server/celld \
