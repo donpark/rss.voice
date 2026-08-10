@@ -13,6 +13,25 @@
   --color-accent-soft: var(--theme-accent-soft);
   --color-own: var(--theme-own);
   --color-other: var(--theme-other);
+  --color-chat-bg: var(--chat-bg);
+  --color-chat-header: var(--chat-header);
+  --color-chat-header-light: var(--chat-header-light);
+  --color-chat-avatar: var(--chat-avatar);
+  --color-chat-mine: var(--chat-mine);
+  --color-chat-theirs: var(--chat-theirs);
+  --color-chat-input: var(--chat-input);
+  --color-chat-ink: var(--chat-ink);
+  --color-chat-muted: var(--chat-muted);
+  --color-chat-sender: var(--chat-sender);
+  --color-chat-own: var(--chat-own);
+  --font-ref-display: var(--ref-display);
+  --color-ref-ink: var(--ref-ink);
+  --color-ref-strong: var(--ref-strong);
+  --color-ref-muted: var(--ref-muted);
+  --color-ref-line: var(--ref-line);
+  --color-ref-blue: var(--ref-blue);
+  --color-ref-input: var(--ref-input);
+  --color-ref-bg: var(--ref-bg);
 }
 
 :root,
@@ -22,11 +41,30 @@
   --theme-panel-strong: #fffdf8;
   --theme-ink: #20221e;
   --theme-muted: #75766d;
-  --theme-line: #d8d2c5;
-  --theme-accent: #b84c35;
+  --theme-line: #e1e8ed;
+  --theme-accent: #9f3f2b;
   --theme-accent-soft: #f2d8cd;
   --theme-own: #e6efd9;
   --theme-other: #fffdf8;
+  --chat-bg: #e5ddd5;
+  --chat-header: #075e54;
+  --chat-header-light: #128c7e;
+  --chat-avatar: #128c7e;
+  --chat-mine: #dcf8c6;
+  --chat-theirs: #ffffff;
+  --chat-input: #f0f0f0;
+  --chat-ink: #111111;
+  --chat-muted: #53656b;
+  --chat-sender: #13795b;
+  --chat-own: #276642;
+  --ref-display: "Arial Black", Impact, sans-serif;
+  --ref-ink: #333333;
+  --ref-strong: #111111;
+  --ref-muted: #8f969b;
+  --ref-line: #e1e8ed;
+  --ref-blue: #0878c9;
+  --ref-input: #f2f4f5;
+  --ref-bg: #ffffff;
 }
 
 [data-theme="night"] {
@@ -40,6 +78,25 @@
   --theme-accent-soft: #4a2e27;
   --theme-own: #2d4436;
   --theme-other: #2b302c;
+  --chat-bg: #182421;
+  --chat-header: #064c44;
+  --chat-header-light: #0d766a;
+  --chat-avatar: #0d766a;
+  --chat-mine: #294b37;
+  --chat-theirs: #26302d;
+  --chat-input: #202a27;
+  --chat-ink: #f1f0e9;
+  --chat-muted: #a4aaa1;
+  --chat-sender: #72c9a6;
+  --chat-own: #9bd8a6;
+  --ref-display: "Arial Black", Impact, sans-serif;
+  --ref-ink: #dce4e8;
+  --ref-strong: #f4f7f8;
+  --ref-muted: #a9b4ba;
+  --ref-line: #3d484e;
+  --ref-blue: #62b5f2;
+  --ref-input: #252d31;
+  --ref-bg: #182421;
 }
 
 html {
@@ -50,7 +107,9 @@ html {
 
 body {
   min-width: 320px;
+  min-height: 100vh;
   margin: 0;
+  background: var(--ref-bg);
 }
 
 button,
