@@ -1,0 +1,163 @@
+---
+import "../styles/global.css";
+
+const apiUrl = (import.meta.env.PUBLIC_API_URL ?? "").replace(/\/$/, "");
+const serverUrl = apiUrl || "";
+---
+
+<!doctype html>
+<html lang="en" data-theme="classic">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content="An open, feed-first voice community." />
+    <title>rss.voice</title>
+  </head>
+  <body data-api-url={apiUrl}>
+    <main class="mx-auto grid min-h-screen max-w-[1440px] grid-cols-1 bg-page text-ink lg:grid-cols-[15rem_minmax(0,1fr)_16rem]">
+      <aside class="border-line border-b p-6 lg:border-r lg:border-b-0">
+        <a href="/" class="font-display text-2xl font-semibold tracking-[-0.05em]">rss.voice</a>
+        <p class="mt-3 max-w-[13rem] text-sm leading-6 text-muted">
+          A small community built from open feeds, ordinary posts, and the human voice.
+        </p>
+        <nav aria-label="Primary" class="mt-10 space-y-1 text-sm">
+          <a class="block rounded-lg bg-accent-soft px-3 py-2 font-medium text-accent" href="/">Everyone</a>
+          <a class="block rounded-lg px-3 py-2 text-muted hover:bg-panel-strong hover:text-ink" href={`${serverUrl}/users/rss.xml`}>RSS feed</a>
+          <a class="block rounded-lg px-3 py-2 text-muted hover:bg-panel-strong hover:text-ink" href={`${serverUrl}/data/subs.opml`}>OPML roster</a>
+        </nav>
+        <div class="mt-12 border-line border-t pt-5 text-xs leading-5 text-muted">
+          <p>Open by design.</p>
+          <p>Portable by default.</p>
+        </div>
+      </aside>
+
+      <section class="min-w-0 border-line lg:border-r" aria-labelledby="timeline-heading">
+        <header class="flex items-end justify-between gap-4 border-line border-b bg-panel px-5 py-5 sm:px-8">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Community feed</p>
+            <h1 id="timeline-heading" class="mt-2 font-display text-3xl font-semibold tracking-[-0.05em]">Everyone</h1>
+          </div>
+          <span id="connection-state" class="rounded-full border border-line px-3 py-1 text-xs text-muted">Connecting</span>
+        </header>
+
+        <div id="timeline" class="space-y-3 p-4 sm:p-8" aria-live="polite">
+          <div class="rounded-xl border border-line bg-panel-strong p-6 text-sm text-muted">Loading the feed…</div>
+        </div>
+      </section>
+
+      <aside class="p-6">
+        <div class="rounded-2xl border border-line bg-panel p-5">
+          <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Appearance</p>
+          <h2 class="mt-2 font-display text-lg font-semibold">Choose a room tone</h2>
+          <div class="mt-4 flex gap-2" role="group" aria-label="Theme">
+            <button class="theme-button rounded-full border border-line px-3 py-1.5 text-xs font-medium" data-theme-choice="classic">Classic</button>
+            <button class="theme-button rounded-full border border-line px-3 py-1.5 text-xs font-medium" data-theme-choice="night">Night</button>
+          </div>
+        </div>
+        <div class="mt-4 rounded-2xl bg-panel-strong p-5 text-sm leading-6 text-muted">
+          <p class="font-medium text-ink">First slice</p>
+          <p class="mt-2">A read-only feed surface backed by the protocol Worker. Publishing, replies, and voice capture come next.</p>
+        </div>
+      </aside>
+    </main>
+
+    <script>
+      type Item = {
+        id: number;
+        author?: string;
+        screenname?: string;
+        description?: string;
+        title?: string;
+        pubDate: string;
+        enclosureUrl?: string;
+        enclosureType?: string;
+        enclosureLength?: number;
+      };
+
+      const root = document.documentElement;
+      const body = document.body;
+      const timeline = document.querySelector<HTMLDivElement>("#timeline");
+      const state = document.querySelector<HTMLSpanElement>("#connection-state");
+      const apiUrl = body.dataset.apiUrl ?? "";
+      const themeKey = "rss.voice.theme";
+      const savedTheme = localStorage.getItem(themeKey);
+      if (savedTheme === "classic" || savedTheme === "night") root.dataset.theme = savedTheme;
+
+      document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const theme = button.dataset.themeChoice;
+          if (theme !== "classic" && theme !== "night") return;
+          root.dataset.theme = theme;
+          localStorage.setItem(themeKey, theme);
+        });
+      });
+
+      function addText(parent: HTMLElement, text: string | undefined, className = "") {
+        if (!text) return;
+        const element = document.createElement("p");
+        element.className = className;
+        element.textContent = text;
+        parent.append(element);
+      }
+
+      function renderItem(item: Item) {
+        const article = document.createElement("article");
+        article.className = "rounded-2xl border border-line bg-panel-strong p-5 shadow-[0_1px_2px_rgb(0_0_0_/_0.04)]";
+        addText(article, item.author ?? item.screenname ?? "Unknown member", "text-xs font-semibold uppercase tracking-[0.12em] text-accent");
+        addText(article, item.title, "mt-3 font-display text-xl font-semibold tracking-[-0.03em]");
+        addText(article, item.description, "mt-3 whitespace-pre-wrap text-[0.95rem] leading-7 text-ink");
+
+        if (item.enclosureUrl && item.enclosureType?.startsWith("audio/")) {
+          const audio = document.createElement("audio");
+          audio.className = "mt-4 w-full";
+          audio.controls = true;
+          audio.preload = "metadata";
+          audio.src = item.enclosureUrl;
+          article.append(audio);
+        }
+
+        const footer = document.createElement("div");
+        footer.className = "mt-5 flex items-center justify-between border-line border-t pt-3 text-xs text-muted";
+        addText(footer, new Date(item.pubDate).toLocaleString([], {dateStyle: "medium", timeStyle: "short"}));
+        const permalink = document.createElement("a");
+        permalink.className = "text-accent hover:underline";
+        permalink.href = `${apiUrl}/?id=${item.id}`;
+        permalink.textContent = "Permalink";
+        footer.append(permalink);
+        article.append(footer);
+        return article;
+      }
+
+      async function loadFeed() {
+        try {
+          const itemId = new URLSearchParams(location.search).get("id");
+          const endpoint = itemId ? `${apiUrl}/getitembyguid?id=${encodeURIComponent(itemId)}` : `${apiUrl}/getrecentitems?ct=50`;
+          const response = await fetch(endpoint);
+          if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
+          const payload = await response.json() as Item[] | Item;
+          const items = Array.isArray(payload) ? payload : [payload];
+          timeline?.replaceChildren();
+          if (itemId) {
+            const heading = document.querySelector<HTMLHeadingElement>("#timeline-heading");
+            if (heading) heading.textContent = "Post";
+          }
+          if (!items.length) {
+            addText(timeline!, "No posts yet. The first voice will make the room.", "rounded-2xl border border-dashed border-line bg-panel p-8 text-sm text-muted");
+          } else {
+            items.reverse().forEach((item) => timeline?.append(renderItem(item)));
+          }
+          if (state) {
+            state.textContent = "Live feed";
+            state.className = "rounded-full bg-accent-soft px-3 py-1 text-xs text-accent";
+          }
+        } catch (error) {
+          if (timeline) timeline.innerHTML = "";
+          addText(timeline!, error instanceof Error ? error.message : "The feed is unavailable.", "rounded-2xl border border-red-300 bg-red-50 p-6 text-sm text-red-800");
+          if (state) state.textContent = "Offline";
+        }
+      }
+
+      loadFeed();
+    </script>
+  </body>
+</html>

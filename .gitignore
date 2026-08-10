@@ -1,1 +1,6 @@
 .pi-subagents
+node_modules/
+dist/
+.astro/
+.wrangler/
+.env*

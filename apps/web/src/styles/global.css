@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Avenir Next", "Segoe UI", sans-serif;
+  --font-body: "Inter", "Avenir Next", system-ui, sans-serif;
+  --color-page: var(--theme-page);
+  --color-panel: var(--theme-panel);
+  --color-panel-strong: var(--theme-panel-strong);
+  --color-ink: var(--theme-ink);
+  --color-muted: var(--theme-muted);
+  --color-line: var(--theme-line);
+  --color-accent: var(--theme-accent);
+  --color-accent-soft: var(--theme-accent-soft);
+  --color-own: var(--theme-own);
+  --color-other: var(--theme-other);
+}
+
+:root,
+[data-theme="classic"] {
+  --theme-page: #e8e4dc;
+  --theme-panel: #f7f4ed;
+  --theme-panel-strong: #fffdf8;
+  --theme-ink: #20221e;
+  --theme-muted: #75766d;
+  --theme-line: #d8d2c5;
+  --theme-accent: #b84c35;
+  --theme-accent-soft: #f2d8cd;
+  --theme-own: #e6efd9;
+  --theme-other: #fffdf8;
+}
+
+[data-theme="night"] {
+  --theme-page: #161817;
+  --theme-panel: #202321;
+  --theme-panel-strong: #282c29;
+  --theme-ink: #f1f0e9;
+  --theme-muted: #a4aaa1;
+  --theme-line: #3a403b;
+  --theme-accent: #ee8b68;
+  --theme-accent-soft: #4a2e27;
+  --theme-own: #2d4436;
+  --theme-other: #2b302c;
+}
+
+html {
+  background: var(--theme-page);
+  color: var(--theme-ink);
+  font-family: var(--font-body);
+}
+
+body {
+  min-width: 320px;
+  margin: 0;
+}
+
+button,
+a,
+input {
+  font: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 3px solid var(--theme-accent);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,8 +1,10 @@
 # rss.voice
 
-This is a fork of rss.chat with voice post enabled by default.
+An independent rss.chat-compatible voice-post network. The rewrite uses a protocol implementation of its own; the older reference materials in this repository are not runtime dependencies.
 
-rss.chat is a simple chat network, client and server, based on RSS 2.0 feeds and websockets.
+The first vertical slice lives in `apps/server` and `apps/web`: a Cloudflare Worker/celld-compatible feed server, D1 schema, Astro frontend, and Tailwind theme system.
+
+rss.chat is a simple chat network, client and server, based on RSS 2.0 feeds and WebSockets. rss.voice adds audio enclosures to ordinary posts.
 
 ### Use the voice record button at the top-right area of the New Post dialog
 

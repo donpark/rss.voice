@@ -1,0 +1,24 @@
+name = "rss-voice"
+main = "../src/index.ts"
+compatibility_date = "2026-08-08"
+
+[vars]
+INSTANCE_NAME = "rss.voice"
+TENANT_ID = "default"
+BASE_URL = "http://127.0.0.1:8780"
+
+# celld provides the D1/Durable Object-compatible stateful primitives.
+[[d1_databases]]
+binding = "DB"
+database_name = "rss-voice"
+database_id = "local"
+migrations_dir = "../migrations"
+
+[durable_objects]
+bindings = [
+  { name = "FIREHOSE", class_name = "Firehose" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Firehose"]
