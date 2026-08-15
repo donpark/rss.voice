@@ -1,0 +1,13 @@
+{
+  "name": "rss-voice-firehose-compat",
+  "main": "index.ts",
+  "compatibility_date": "2026-08-08",
+  "durable_objects": {
+    "bindings": [
+      {"name": "FIREHOSE", "class_name": "Firehose"}
+    ]
+  },
+  "migrations": [
+    {"tag": "v1", "new_sqlite_classes": ["Firehose"]}
+  ]
+}

@@ -25,6 +25,9 @@ migrations_dir = "migrations"
 binding = "MEDIA"
 bucket_name = "rss-voice-media"
 
+# Firehose uses the Durable Object WebSocket Hibernation API.
+# No per-deployment flag is required; the shared Firehose class calls
+# state.acceptWebSocket() and receives hibernation event callbacks.
 [durable_objects]
 bindings = [
   { name = "FIREHOSE", class_name = "Firehose" }

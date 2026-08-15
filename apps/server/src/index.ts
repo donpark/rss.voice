@@ -799,16 +799,18 @@ async function handle(request: Request, env: Env): Promise<Response> {
 }
 
 export class Firehose {
-  private readonly sockets = new Set<WebSocket>();
-
-  constructor() {}
+  constructor(private readonly state: DurableObjectState) {}
 
   private send(message: string): void {
-    for (const socket of this.sockets) {
+    for (const socket of this.state.getWebSockets()) {
       try {
         socket.send(message);
       } catch {
-        this.sockets.delete(socket);
+        try {
+          socket.close(1011, "Firehose connection failed");
+        } catch {
+          // The runtime removes closed sockets from the hibernating object.
+        }
       }
     }
   }
@@ -823,13 +825,16 @@ export class Firehose {
     }
     const pair = new WebSocketPair();
     const client = pair[0];
-    const server = pair[1];
-    server.accept();
-    this.sockets.add(server);
-    server.addEventListener("close", () => this.sockets.delete(server));
-    server.addEventListener("error", () => this.sockets.delete(server));
+    this.state.acceptWebSocket(pair[1]);
     return new Response(null, {status: 101, webSocket: client});
   }
+
+  // Firehose clients only receive broadcasts. These handlers allow the
+  // runtime to wake the object for unexpected client-side events without
+  // keeping a JavaScript WebSocket listener alive between events.
+  webSocketMessage(_socket: WebSocket, _message: string | ArrayBuffer): void {}
+  webSocketClose(_socket: WebSocket, _code: number, _reason: string, _wasClean: boolean): void {}
+  webSocketError(_socket: WebSocket, _error: unknown): void {}
 
 }
 

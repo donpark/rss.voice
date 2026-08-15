@@ -14,10 +14,34 @@ const link = new URL(created.devMagicLink);
 await fetch(link, {redirect: "manual"});
 const auth = `emailaddress=${encodeURIComponent(email)}&emailcode=${encodeURIComponent(link.searchParams.get("code"))}`;
 
+const firehose = new WebSocket(`${base.replace(/^http/, "ws")}/firehose`);
+await new Promise((resolve, reject) => {
+  const timeout = setTimeout(() => reject(new Error("firehose connection timed out")), 5000);
+  firehose.addEventListener("open", () => {
+    clearTimeout(timeout);
+    resolve();
+  }, {once: true});
+  firehose.addEventListener("error", () => {
+    clearTimeout(timeout);
+    reject(new Error("firehose connection failed"));
+  }, {once: true});
+});
+const firehoseMessage = new Promise((resolve, reject) => {
+  const timeout = setTimeout(() => reject(new Error("firehose broadcast timed out")), 5000);
+  firehose.addEventListener("message", (event) => {
+    clearTimeout(timeout);
+    resolve(event.data);
+  }, {once: true});
+});
+
 const parent = await responseJson(await fetch(`${base}/newpost?${auth}`, {
   method: "POST",
   body: JSON.stringify({markdowntext: "integration parent"}),
 }));
+const event = await firehoseMessage;
+if (typeof event !== "string" || !event.startsWith("newItem\r")) throw new Error("firehose broadcast mismatch");
+firehose.close();
+
 const child = await responseJson(await fetch(`${base}/newpost?${auth}`, {
   method: "POST",
   body: JSON.stringify({markdowntext: "integration child", inReplyTo: parent.id}),
