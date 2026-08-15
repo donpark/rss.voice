@@ -4,6 +4,6 @@ dist/
 .astro/
 .wrangler/
 .dev.vars
-.env*
+.env*.local
 
 __pycache__/
