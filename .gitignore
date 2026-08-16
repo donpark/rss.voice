@@ -1,1 +1,9 @@
 .pi-subagents
+node_modules/
+dist/
+.astro/
+.wrangler/
+.dev.vars
+.env*.local
+
+__pycache__/

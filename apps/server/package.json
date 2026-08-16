@@ -1,0 +1,15 @@
+{
+  "name": "@rss-voice/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test:integration": "node test/integration.mjs"
+  },
+  "dependencies": {
+    "@rss-voice/protocol": "*",
+    "aws4fetch": "^1.0.20"
+  }
+}

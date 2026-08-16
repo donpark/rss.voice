@@ -1,0 +1,44 @@
+name = "rss-voice"
+main = "src/index.ts"
+compatibility_date = "2026-08-08"
+
+[triggers]
+crons = ["0 * * * *"]
+
+[vars]
+INSTANCE_NAME = "rss.voice"
+TENANT_ID = "default"
+BASE_URL = "http://127.0.0.1:8787"
+WEB_URL = "http://127.0.0.1:4321"
+MAX_MEDIA_UPLOAD_BYTES = "2097152"
+AUTH_RATE_LIMIT = "5"
+WRITE_RATE_LIMIT = "60"
+MEDIA_ORPHAN_GRACE_HOURS = "24"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rss-voice"
+database_id = "local"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "rss-voice-media"
+
+# Firehose uses the Durable Object WebSocket Hibernation API.
+# No per-deployment flag is required; the shared Firehose class calls
+# state.acceptWebSocket() and receives hibernation event callbacks.
+[durable_objects]
+bindings = [
+  { name = "FIREHOSE", class_name = "Firehose" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Firehose"]
+
+[[migrations]]
+tag = "v2"
+
+[[migrations]]
+tag = "v3"

@@ -1,0 +1,756 @@
+---
+import "../styles/global.css";
+
+const apiUrl = (import.meta.env.PUBLIC_API_URL ?? "").replace(/\/$/, "");
+const serverUrl = apiUrl || "";
+---
+
+<!doctype html>
+<html lang="en" data-theme="classic">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content="An open, feed-first voice community." />
+    <title>rss.voice</title>
+    <link rel="stylesheet" href="https://s3.amazonaws.com/scripting.com/code/fontawesome/css/all.css" />
+  </head>
+  <body data-api-url={apiUrl}>
+    <main class="mx-auto grid min-h-screen w-full max-w-[1180px] grid-cols-1 bg-ref-bg text-ref-ink">
+      <header class="col-span-full flex h-[3.25rem] items-center gap-6 border-b border-ref-line bg-ref-bg px-5 md:px-8">
+        <a href="/" class="font-ref-display text-5xl font-black leading-none tracking-[-0.07em] text-ref-strong">rss.voice</a>
+        <nav aria-label="Primary" class="flex items-center gap-5 text-sm font-semibold text-ref-muted">
+          <a class="hover:text-ref-blue" href={`${serverUrl}/users/rss.xml`} aria-label="RSS feed">RSS</a>
+          <a class="hover:text-ref-blue" href={`${serverUrl}/data/subs.opml`} aria-label="OPML roster">OPML</a>
+        </nav>
+        <span id="connection-state" class="hidden">Connecting</span>
+        <button id="settings-trigger" class="text-lg text-ref-muted hover:text-ref-blue" type="button" aria-label="Open settings" title="Settings" aria-expanded="false" aria-controls="settings-modal"><i class="fas fa-cog" aria-hidden="true"></i></button>
+        <button id="sign-in-trigger" class="ml-auto text-sm font-semibold text-ref-muted hover:text-ref-blue" type="button" aria-expanded="false" aria-controls="auth-popover"><i class="fa fa-user text-blue-500" aria-hidden="true"></i> Sign in here.</button>
+      </header>
+
+      <button id="new-post-trigger" class="new-post-fab" type="button" aria-label="New post" title="New post"><i class="fas fa-plus" aria-hidden="true"></i></button>
+
+      <div id="auth-popover" class="fixed right-6 top-16 z-50 hidden w-72 rounded-lg border border-ref-line bg-ref-bg p-4 text-ref-ink shadow-xl" role="dialog" aria-labelledby="auth-popover-title">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Account</p>
+            <h2 id="auth-popover-title" class="mt-1 font-display text-lg font-semibold">Join the room</h2>
+          </div>
+          <button id="auth-popover-close" class="text-xl leading-none text-ref-muted hover:text-ref-strong" type="button" aria-label="Close sign-in dialog">×</button>
+        </div>
+        <form id="auth-form" class="mt-4 space-y-2">
+          <label class="sr-only" for="auth-email">Email</label>
+          <input id="auth-email" class="w-full rounded-lg border border-line bg-panel-strong px-3 py-2 text-sm" type="email" placeholder="you@example.com" required />
+          <label class="sr-only" for="auth-name">Screenname</label>
+          <input id="auth-name" class="w-full rounded-lg border border-line bg-panel-strong px-3 py-2 text-sm" type="text" placeholder="screenname (new accounts)" pattern="[A-Za-z][A-Za-z0-9_-]{1,31}" />
+          <div class="flex gap-2 pt-1">
+            <button id="create-account" class="rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-white" type="button">Create</button>
+            <button id="sign-in" class="rounded-full border border-line px-3 py-1.5 text-xs font-semibold" type="button">Sign in</button>
+          </div>
+        </form>
+        <p id="auth-status" class="mt-3 text-xs leading-5 text-muted">Magic-link sign-in.</p>
+      </div>
+
+      <div id="settings-modal" class="fixed inset-0 z-50 hidden items-start justify-end bg-black/20 px-5 pt-16 md:px-8" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <section class="w-full max-w-sm border border-ref-line bg-ref-bg p-5 text-ref-ink shadow-2xl">
+          <header class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Preferences</p>
+              <h2 id="settings-title" class="mt-1 font-display text-xl font-semibold">Settings</h2>
+            </div>
+            <button id="settings-close" class="text-xl leading-none text-ref-muted hover:text-ref-strong" type="button" aria-label="Close settings">×</button>
+          </header>
+          <div class="mt-6">
+            <p class="text-sm font-semibold text-ref-strong">Appearance</p>
+            <div class="mt-3 grid grid-cols-3 gap-2" role="group" aria-label="Theme">
+              <button class="rounded-lg border border-ref-line px-3 py-2 text-sm text-ref-ink hover:border-ref-blue" data-theme-choice="system" type="button">System</button>
+              <button class="rounded-lg border border-ref-line px-3 py-2 text-sm text-ref-ink hover:border-ref-blue" data-theme-choice="light" type="button">Light</button>
+              <button class="rounded-lg border border-ref-line px-3 py-2 text-sm text-ref-ink hover:border-ref-blue" data-theme-choice="dark" type="button">Dark</button>
+            </div>
+          </div>
+          <p class="mt-6 border-t border-ref-line pt-4 text-xs leading-5 text-ref-muted">Feed and profile preferences will live here once server-side preferences are wired.</p>
+        </section>
+      </div>
+
+      <div id="post-modal" class="fixed inset-0 z-40 hidden items-start justify-center bg-black/20 px-11 pt-7" role="dialog" aria-modal="true" aria-labelledby="post-modal-title">
+        <form id="composer" class="w-full max-w-3xl border border-ref-line bg-ref-bg p-3 shadow-2xl">
+          <div class="flex items-center gap-8">
+            <label class="sr-only" for="post-title">Post title</label>
+            <input id="post-title" class="h-10 flex-1 rounded-lg border border-ref-line bg-ref-bg px-3 text-base text-ref-ink outline-none placeholder:text-ref-muted focus:ring-2 focus:ring-ref-blue" placeholder="Title?" />
+            <div class="flex items-center gap-4 text-xl text-ref-muted">
+              <button type="button" aria-label="Bold"><i class="fas fa-bold" aria-hidden="true"></i></button>
+              <button type="button" aria-label="Italic"><i class="fas fa-italic" aria-hidden="true"></i></button>
+              <button type="button" aria-label="Insert link"><i class="fas fa-link" aria-hidden="true"></i></button>
+              <button type="button" aria-label="Bulleted list"><i class="fas fa-list-ul" aria-hidden="true"></i></button>
+              <button type="button" aria-label="Numbered list"><i class="fas fa-list-ol" aria-hidden="true"></i></button>
+              <button type="button" aria-label="Markdown"><i class="fas fa-markdown" aria-hidden="true"></i></button>
+              <button id="voice-record" class="hover:text-ref-strong disabled:cursor-not-allowed disabled:opacity-40" type="button" aria-label="Record voice" title="Record voice" disabled><i class="fas fa-microphone" aria-hidden="true"></i></button>
+              <button type="button" aria-label="More formatting"><i class="fas fa-ellipsis-v" aria-hidden="true"></i></button>
+            </div>
+          </div>
+          <label class="sr-only" for="post-text">Write a post</label>
+          <textarea id="post-text" class="mt-2 min-h-48 w-full resize-y rounded-lg border-2 border-ref-line bg-ref-bg px-3 py-3 text-base leading-6 text-ref-ink outline-none placeholder:text-ref-muted focus:ring-2 focus:ring-ref-blue" placeholder="What's happening?" disabled></textarea>
+          <div id="voice-recording" class="mt-4 hidden items-center gap-3 rounded-3xl bg-ref-input px-3 py-2 text-base text-ref-ink">
+            <i class="fas fa-microphone" aria-hidden="true"></i><span id="voice-status">Up to 4 minutes.</span>
+            <button id="voice-clear" class="text-3xl text-ref-strong" type="button" aria-label="Remove voice recording">×</button>
+          </div>
+          <div class="mt-3 flex items-center justify-end gap-4 border-t border-ref-line pt-3 text-base">
+            <span id="composer-status" class="mr-auto text-ref-muted">Sign in to publish.</span>
+            <span class="text-ref-muted">SAVED</span><span class="text-ref-muted">now</span><span id="character-count" class="text-ref-muted">0 characters</span>
+            <button id="post-modal-cancel" class="rounded-lg border border-ref-line bg-ref-bg px-4 py-2 text-ref-ink" type="button">Cancel</button>
+            <button id="publish" class="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40" type="submit" disabled>Publish</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="recording-modal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/70 px-4" role="dialog" aria-modal="true" aria-labelledby="recording-time">
+        <div class="w-full max-w-md rounded-2xl bg-white p-10 text-center shadow-2xl">
+          <p id="recording-time" class="font-mono text-4xl text-gray-800">0:00 / 4:00</p>
+          <p id="recording-preview" class="mt-8 text-lg text-slate-500"></p>
+          <div class="mt-16 flex justify-center gap-3">
+            <button id="recording-cancel" class="rounded-lg border border-gray-300 bg-white px-5 py-3 text-lg text-gray-800" type="button">Cancel</button>
+            <button id="recording-stop" class="rounded-lg bg-blue-600 px-5 py-3 text-lg font-semibold text-white" type="button">Stop</button>
+          </div>
+        </div>
+      </div>
+
+      <section class="col-start-1 flex min-h-0 flex-col border-x border-ref-line md:mt-9" aria-labelledby="timeline-heading">
+        <header class="sr-only">
+          <h1 id="timeline-heading">Everyone</h1>
+        </header>
+
+        <div id="thread-shell" class="thread-shell min-h-0 flex-1">
+          <div id="timeline" class="flex min-h-0 flex-1 flex-col overflow-y-auto bg-ref-bg" aria-live="polite">
+            <div class="rounded-xl border border-line bg-panel-strong p-6 text-sm text-muted">Loading the feed…</div>
+          </div>
+          <aside id="thread-panel" class="thread-panel bg-ref-bg" aria-label="Thread" aria-hidden="true">
+            <header class="flex items-center gap-3 border-b border-ref-line px-4 py-3">
+              <button id="thread-close" class="text-xl leading-none text-ref-muted hover:text-ref-strong" type="button" aria-label="Close thread">×</button>
+              <div class="min-w-0">
+                <p class="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-ref-muted">Thread</p>
+                <h2 id="thread-title" class="truncate text-sm font-semibold text-ref-strong">Select a post</h2>
+              </div>
+            </header>
+            <div id="thread-content" class="min-h-0 flex-1 overflow-y-auto" aria-live="polite"></div>
+          </aside>
+        </div>
+      </section>
+
+    </main>
+
+    <script>
+      type Item = {
+        id: number;
+        author?: string;
+        screenname?: string;
+        avatarUrl?: string;
+        feedDescription?: string;
+        description?: string;
+        markdowntext?: string;
+        title?: string;
+        pubDate: string;
+        enclosureUrl?: string;
+        enclosureType?: string;
+        enclosureLength?: number;
+        inReplyToNum?: number;
+        ctReplies?: number;
+        ctLikes?: number;
+        flLiked?: boolean;
+        deleted?: boolean;
+      };
+
+      const root = document.documentElement;
+      const body = document.body;
+      const timeline = document.querySelector<HTMLDivElement>("#timeline");
+      const threadPanel = document.querySelector<HTMLElement>("#thread-panel");
+      const threadContent = document.querySelector<HTMLDivElement>("#thread-content");
+      const threadTitle = document.querySelector<HTMLHeadingElement>("#thread-title");
+      const state = document.querySelector<HTMLSpanElement>("#connection-state");
+      const apiUrl = body.dataset.apiUrl ?? "";
+      const authKey = "rss.voice.auth";
+      const authStatus = document.querySelector<HTMLParagraphElement>("#auth-status");
+      const postModal = document.querySelector<HTMLDivElement>("#post-modal");
+      const settingsModal = document.querySelector<HTMLDivElement>("#settings-modal");
+      const settingsTrigger = document.querySelector<HTMLButtonElement>("#settings-trigger");
+      const newPostTrigger = document.querySelector<HTMLButtonElement>("#new-post-trigger");
+      const closePostModal = () => postModal?.classList.add("hidden");
+      const openPostModal = () => {
+        postModal?.classList.remove("hidden");
+        postModal?.classList.add("flex");
+        if (session) postText?.focus();
+      };
+      const closeSettings = () => {
+        settingsModal?.classList.add("hidden");
+        settingsTrigger?.setAttribute("aria-expanded", "false");
+      };
+      const openSettings = () => {
+        settingsModal?.classList.remove("hidden");
+        settingsModal?.classList.add("flex");
+        settingsTrigger?.setAttribute("aria-expanded", "true");
+      };
+      newPostTrigger?.addEventListener("click", openPostModal);
+      settingsTrigger?.addEventListener("click", () => {
+        if (settingsModal?.classList.contains("hidden")) openSettings();
+        else closeSettings();
+      });
+      document.querySelector<HTMLButtonElement>("#settings-close")?.addEventListener("click", closeSettings);
+      settingsModal?.addEventListener("click", (event) => {
+        if (event.target === settingsModal) closeSettings();
+      });
+      document.querySelector<HTMLButtonElement>("#post-modal-close")?.addEventListener("click", closePostModal);
+      postModal?.addEventListener("click", (event) => {
+        if (event.target === postModal) closePostModal();
+      });
+      const authPopover = document.querySelector<HTMLDivElement>("#auth-popover");
+      const authTrigger = document.querySelector<HTMLButtonElement>("#sign-in-trigger");
+      const closeAuthPopover = () => {
+        authPopover?.classList.add("hidden");
+        authTrigger?.setAttribute("aria-expanded", "false");
+      };
+      authTrigger?.addEventListener("click", () => {
+        const open = authPopover?.classList.toggle("hidden") === false;
+        authTrigger.setAttribute("aria-expanded", String(open));
+      });
+      document.querySelector<HTMLButtonElement>("#auth-popover-close")?.addEventListener("click", closeAuthPopover);
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          closeAuthPopover();
+          closeSettings();
+          closePostModal();
+        }
+      });
+      const composerStatus = document.querySelector<HTMLSpanElement>("#composer-status");
+      const composer = document.querySelector<HTMLFormElement>("#composer");
+      const postTitle = document.querySelector<HTMLInputElement>("#post-title");
+      const postText = document.querySelector<HTMLTextAreaElement>("#post-text");
+      const characterCount = document.querySelector<HTMLSpanElement>("#character-count");
+      const voiceRecording = document.querySelector<HTMLDivElement>("#voice-recording");
+      const publish = document.querySelector<HTMLButtonElement>("#publish");
+      const voiceButton = document.querySelector<HTMLButtonElement>("#voice-record");
+      const voiceStatus = document.querySelector<HTMLSpanElement>("#voice-status");
+      const recordingModal = document.querySelector<HTMLDivElement>("#recording-modal");
+      const recordingTime = document.querySelector<HTMLParagraphElement>("#recording-time");
+      const recordingPreview = document.querySelector<HTMLParagraphElement>("#recording-preview");
+      let cancelRecording: (() => void) | undefined;
+      let recordingInterval: number | undefined;
+      document.querySelector<HTMLButtonElement>("#recording-stop")?.addEventListener("click", () => activeRecorder?.stop());
+      document.querySelector<HTMLButtonElement>("#recording-cancel")?.addEventListener("click", () => cancelRecording?.());
+      postText?.addEventListener("input", () => {
+        if (characterCount) characterCount.textContent = `${postText.value.length} characters`;
+      });
+      document.querySelector<HTMLButtonElement>("#post-modal-cancel")?.addEventListener("click", closePostModal);
+      document.querySelector<HTMLButtonElement>("#voice-clear")?.addEventListener("click", () => {
+        pendingEnclosure = undefined;
+        if (voiceRecording) voiceRecording.classList.add("hidden");
+        if (voiceStatus) voiceStatus.textContent = "Up to 4 minutes.";
+      });
+      let replyTarget: number | undefined;
+      let activeThreadId: number | undefined;
+      let editingId: number | undefined;
+      let pendingEnclosure: {url: string; type: string; length: number; duration?: number} | undefined;
+      let activeRecorder: MediaRecorder | undefined;
+      const renderedIds = new Set<number>();
+      const renderedArticles = new Map<number, HTMLElement>();
+      const feedItems = new Map<number, Item>();
+      let session: {email: string; code: string; screenname: string} | undefined;
+      try {
+        const saved = JSON.parse(localStorage.getItem(authKey) ?? "null");
+        if (saved?.email && saved?.code && saved?.screenname) session = saved;
+      } catch {
+        localStorage.removeItem(authKey);
+      }
+
+      function setStatus(element: HTMLElement | null, message: string) {
+        if (element) element.textContent = message;
+      }
+
+      function updateComposer() {
+        const signedIn = session !== undefined;
+        if (postTitle) postTitle.disabled = !signedIn;
+        if (postText) postText.disabled = !signedIn;
+        if (publish) publish.disabled = !signedIn;
+        if (voiceButton) voiceButton.disabled = !signedIn;
+        setStatus(composerStatus, signedIn ? `Publishing as ${session!.screenname}.` : "Sign in to publish.");
+      }
+
+      function saveSession(next: {email: string; code: string; screenname: string}) {
+        session = next;
+        localStorage.setItem(authKey, JSON.stringify(next));
+        setStatus(authStatus, `Signed in as ${next.screenname}.`);
+        updateComposer();
+      }
+
+      const confirmation = new URLSearchParams(location.search);
+      if (confirmation.get("emailconfirmed") === "true") {
+        const email = confirmation.get("email");
+        const code = confirmation.get("code");
+        const screenname = confirmation.get("screenname");
+        if (email && code && screenname) saveSession({email, code, screenname});
+        history.replaceState({}, "", location.pathname);
+      }
+
+      async function requestMagicLink(mode: "create" | "signin") {
+        const emailInput = document.querySelector<HTMLInputElement>("#auth-email");
+        const nameInput = document.querySelector<HTMLInputElement>("#auth-name");
+        if (!emailInput?.reportValidity()) return;
+        const params = new URLSearchParams({
+          email: emailInput.value,
+          urlredirect: `${location.origin}${location.pathname}`,
+        });
+        if (mode === "create" && nameInput?.value) params.set("name", nameInput.value);
+        const response = await fetch(`${apiUrl}/${mode === "create" ? "createnewuser" : "sendconfirmingemail"}?${params}`);
+        const payload = await response.json().catch(() => undefined);
+        if (!response.ok) throw new Error(typeof payload === "string" ? payload : `Request failed (${response.status})`);
+        setStatus(authStatus, "Check your email for a sign-in link.");
+        if (payload?.devMagicLink) {
+          const link = document.createElement("a");
+          link.href = payload.devMagicLink;
+          link.className = "mt-2 block break-all text-accent underline";
+          link.textContent = "Open local development sign-in link";
+          authStatus?.append(link);
+        }
+      }
+
+      document.querySelector<HTMLButtonElement>("#create-account")?.addEventListener("click", () => {
+        requestMagicLink("create").catch((error) => setStatus(authStatus, error instanceof Error ? error.message : "Account creation failed."));
+      });
+      document.querySelector<HTMLButtonElement>("#sign-in")?.addEventListener("click", () => {
+        requestMagicLink("signin").catch((error) => setStatus(authStatus, error instanceof Error ? error.message : "Sign-in failed."));
+      });
+
+      voiceButton?.addEventListener("click", async () => {
+        if (activeRecorder) {
+          activeRecorder.stop();
+          return;
+        }
+        if (!session || !("MediaRecorder" in window) || !navigator.mediaDevices?.getUserMedia) {
+          setStatus(voiceStatus, "Voice recording is not supported here.");
+          return;
+        }
+        const mimeType = ["audio/webm;codecs=opus", "audio/mp4", "audio/ogg;codecs=opus"]
+          .find((type) => MediaRecorder.isTypeSupported(type));
+        if (!mimeType) {
+          setStatus(voiceStatus, "No supported audio format was found.");
+          return;
+        }
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({audio: true});
+        } catch {
+          setStatus(voiceStatus, "Microphone access was not granted.");
+          return;
+        }
+        const recorder = new MediaRecorder(stream, {mimeType});
+        activeRecorder = recorder;
+        let canceled = false;
+        const chunks: Blob[] = [];
+        const startedAt = Date.now();
+        const timer = window.setTimeout(() => recorder.stop(), 240_000);
+        recordingModal?.classList.remove("hidden");
+        recordingModal?.classList.add("flex");
+        if (recordingPreview) recordingPreview.textContent = postText?.value || "";
+        recordingInterval = window.setInterval(() => {
+          const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+          if (recordingTime) recordingTime.textContent = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")} / 4:00`;
+        }, 250);
+        cancelRecording = () => { canceled = true; recorder.stop(); };
+        voiceButton.innerHTML = '<i class="fas fa-stop" aria-hidden="true"></i><span class="sr-only">Stop recording</span>';
+        voiceRecording?.classList.remove("hidden");
+        voiceRecording?.classList.add("flex");
+        setStatus(voiceStatus, "Recording…");
+        recorder.addEventListener("dataavailable", (event) => event.data.size && chunks.push(event.data));
+        recorder.addEventListener("stop", async () => {
+          window.clearTimeout(timer);
+          if (recordingInterval) window.clearInterval(recordingInterval);
+          recordingModal?.classList.add("hidden");
+          recordingModal?.classList.remove("flex");
+          cancelRecording = undefined;
+          stream.getTracks().forEach((track) => track.stop());
+          activeRecorder = undefined;
+          voiceButton.innerHTML = '<i class="fas fa-microphone" aria-hidden="true"></i>';
+          if (canceled) return;
+          const blob = new Blob(chunks, {type: mimeType});
+          setStatus(voiceStatus, "Uploading voice clip…");
+          const params = new URLSearchParams({
+            emailaddress: session!.email,
+            emailcode: session!.code,
+            type: mimeType,
+            encoding: "raw",
+          });
+          const response = await fetch(`${apiUrl}/uploadmedia?${params}`, {method: "POST", body: blob});
+          if (!response.ok) {
+            setStatus(voiceStatus, await response.text());
+            return;
+          }
+          const media = await response.json() as {url: string; type: string; size: number};
+          const duration = await new Promise<number | undefined>((resolve) => {
+            const audio = new Audio(URL.createObjectURL(blob));
+            audio.addEventListener("loadedmetadata", () => resolve(Number.isFinite(audio.duration) ? Math.round(audio.duration) : undefined), {once: true});
+            audio.addEventListener("error", () => resolve(undefined), {once: true});
+          });
+          pendingEnclosure = {url: media.url, type: media.type, length: media.size, duration};
+          setStatus(voiceStatus, duration ? `Voice clip ready (${duration}s).` : "Voice clip ready.");
+        });
+        recorder.start();
+      });
+
+      composer?.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (!session || (!postText?.value.trim() && !pendingEnclosure)) return;
+        publish!.disabled = true;
+        const params = new URLSearchParams({emailaddress: session.email, emailcode: session.code});
+        const response = await fetch(`${apiUrl}/${editingId ? "updatepost" : "newpost"}?${params}`, {
+          method: "POST",
+          headers: {"content-type": "application/json"},
+          body: JSON.stringify({
+            id: editingId,
+            title: postTitle?.value ?? "",
+            markdowntext: postText.value,
+            inReplyTo: editingId ? undefined : replyTarget,
+            enclosureUrl: pendingEnclosure?.url,
+            enclosureType: pendingEnclosure?.type,
+            enclosureLength: pendingEnclosure?.length,
+          }),
+        });
+        if (!response.ok) {
+          setStatus(composerStatus, await response.text());
+          publish!.disabled = false;
+          return;
+        }
+        const threadToOpen = activeThreadId ?? replyTarget;
+        if (postTitle) postTitle.value = "";
+        postText.value = "";
+        if (characterCount) characterCount.textContent = "0 characters";
+        replyTarget = undefined;
+        editingId = undefined;
+        pendingEnclosure = undefined;
+        publish!.textContent = "Publish";
+        setStatus(voiceStatus, "Up to 4 minutes.");
+        setStatus(composerStatus, "Published.");
+        publish!.disabled = false;
+        closePostModal();
+        await loadFeed();
+        if (threadToOpen !== undefined) await openThread(threadToOpen, false);
+      });
+
+      updateComposer();
+      const themeKey = "rss.voice.theme";
+      type ThemeMode = "system" | "dark" | "light";
+      let themeMode: ThemeMode = "system";
+      const savedTheme = localStorage.getItem(themeKey);
+      if (savedTheme === "classic") themeMode = "light";
+      if (savedTheme === "night") themeMode = "dark";
+      if (savedTheme === "system" || savedTheme === "dark" || savedTheme === "light") themeMode = savedTheme;
+
+      function applyTheme(mode: ThemeMode, persist = true) {
+        themeMode = mode;
+        const dark = mode === "dark" || (mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+        root.dataset.theme = dark ? "night" : "classic";
+        if (persist) localStorage.setItem(themeKey, mode);
+        document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach((button) => {
+          const selected = button.dataset.themeChoice === mode;
+          button.setAttribute("aria-pressed", String(selected));
+          button.classList.toggle("border-ref-blue", selected);
+          button.classList.toggle("bg-ref-input", selected);
+        });
+      }
+      applyTheme(themeMode, false);
+      matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+        if (themeMode === "system") applyTheme("system", false);
+      });
+
+      document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const theme = button.dataset.themeChoice;
+          if (theme !== "system" && theme !== "dark" && theme !== "light") return;
+          applyTheme(theme);
+        });
+      });
+
+      function addText(parent: HTMLElement, text: string | undefined, className = "") {
+        if (!text) return;
+        const element = document.createElement("p");
+        element.className = className;
+        element.textContent = text;
+        parent.append(element);
+      }
+
+      function addMarkdown(parent: HTMLElement, markdown: string | undefined, className = "") {
+        if (!markdown) return;
+        const element = document.createElement("p");
+        element.className = className;
+        const image = /!\[([^\]]*)\]\((https?:\/\/[^)\s]+)(?:\s+"[^"]*")?\)/g;
+        let cursor = 0;
+        for (const match of markdown.matchAll(image)) {
+          element.append(document.createTextNode(markdown.slice(cursor, match.index)));
+          const img = document.createElement("img");
+          img.src = match[2];
+          img.alt = match[1];
+          img.loading = "lazy";
+          img.decoding = "async";
+          img.className = "post-image";
+          element.append(img);
+          cursor = (match.index ?? 0) + match[0].length;
+        }
+        element.append(document.createTextNode(markdown.slice(cursor)));
+        parent.append(element);
+      }
+
+      function markActiveMessage(id: number | undefined) {
+        renderedArticles.forEach((article, postId) => article.classList.toggle("thread-active", postId === id));
+      }
+
+      function closeThread() {
+        activeThreadId = undefined;
+        markActiveMessage(undefined);
+        threadPanel?.classList.remove("is-open");
+        threadPanel?.setAttribute("aria-hidden", "true");
+      }
+
+      async function openThread(id: number, toggle = true) {
+        if (toggle && activeThreadId === id && threadPanel?.classList.contains("is-open")) {
+          closeThread();
+          return;
+        }
+        activeThreadId = id;
+        markActiveMessage(id);
+        threadPanel?.classList.add("is-open");
+        threadPanel?.setAttribute("aria-hidden", "false");
+        const root = feedItems.get(id);
+        threadTitle && (threadTitle.textContent = root?.title || `Thread on post ${id}`);
+        threadContent?.replaceChildren();
+        addText(threadContent!, "Loading thread…", "p-5 text-sm text-ref-muted");
+        try {
+          const response = await fetch(`${apiUrl}/getitemandreplies?idparent=${encodeURIComponent(id)}`);
+          if (!response.ok) throw new Error(`Thread request failed (${response.status})`);
+          const items = await response.json() as Item[];
+          if (activeThreadId !== id) return;
+          threadContent?.replaceChildren();
+          if (!items.length) {
+            addText(threadContent!, "This thread is unavailable.", "p-5 text-sm text-ref-muted");
+            return;
+          }
+          items.filter((item) => item.id === id || item.inReplyToNum === id)
+            .forEach((item) => threadContent?.append(renderItem(item, id)));
+        } catch (error) {
+          if (activeThreadId !== id) return;
+          threadContent?.replaceChildren();
+          addText(threadContent!, error instanceof Error ? error.message : "The thread is unavailable.", "p-5 text-sm text-red-700");
+        }
+      }
+
+      document.querySelector<HTMLButtonElement>("#thread-close")?.addEventListener("click", closeThread);
+
+      function renderItem(item: Item, threadRootId?: number) {
+        const article = document.createElement("article");
+        const isThread = threadRootId !== undefined;
+        const isReply = isThread && item.id !== threadRootId;
+        const mine = session?.screenname === item.screenname;
+        article.dataset.postId = String(item.id);
+        article.className = `group w-full border-b border-ref-line bg-ref-bg px-4 py-3 ${isThread ? (isReply ? "thread-reply" : "thread-root") : "message-list-mode"}`;
+        if (!isThread) {
+          article.tabIndex = 0;
+          article.setAttribute("aria-label", `Open thread on post ${item.id}`);
+          const selectThread = (event: Event) => {
+            if (event.target instanceof Element && event.target.closest("button, a, audio")) return;
+            void openThread(item.id);
+          };
+          article.addEventListener("click", selectThread);
+          article.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              selectThread(event);
+            }
+          });
+        }
+        const identity = document.createElement("div");
+        identity.className = "flex items-center gap-2";
+        if (item.screenname) {
+          identity.title = `@${item.screenname} - ${item.feedDescription ?? ""}`;
+        }
+        const avatar = document.createElement("div");
+        avatar.className = "flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-300 text-sm font-bold text-white";
+        if (item.avatarUrl) {
+          const image = document.createElement("img");
+          image.src = item.avatarUrl;
+          image.alt = "";
+          image.loading = "lazy";
+          image.className = "h-full w-full rounded-full object-cover";
+          avatar.append(image);
+        } else {
+          avatar.textContent = (item.author ?? item.screenname ?? "?").slice(0, 1).toUpperCase();
+        }
+        identity.append(avatar);
+        addText(identity, item.author ?? item.screenname ?? "Unknown member", `text-sm font-bold ${mine ? "text-ref-blue" : "text-ref-strong"}`);
+        addText(identity, `· ${new Date(item.pubDate).toLocaleString([], {dateStyle: "short", timeStyle: "short"})}`, "text-sm text-ref-muted");
+        article.append(identity);
+        addText(article, item.title, "ml-14 mt-0.5 font-semibold");
+        addMarkdown(article, item.markdowntext ?? item.description?.replace(/<[^>]+>/g, ""), "ml-14 mt-2 whitespace-pre-wrap text-[0.98rem] leading-6 text-ref-strong");
+
+        if (item.enclosureUrl && item.enclosureType?.startsWith("audio/")) {
+          const audio = document.createElement("audio");
+          audio.className = "ml-14 mt-2 max-w-[calc(100%-3.5rem)]";
+          audio.controls = true;
+          audio.preload = "metadata";
+          audio.style.width = "18rem";
+          audio.addEventListener("loadedmetadata", () => {
+            const duration = Math.min(240, Math.max(0, audio.duration));
+            const width = 18 + (38 - 18) * duration / 240;
+            audio.style.width = `${width}rem`;
+          }, {once: true});
+          audio.src = item.enclosureUrl;
+          article.append(audio);
+        }
+
+        const footer = document.createElement("div");
+        footer.className = "ml-14 mt-3 flex items-center text-base text-ref-muted";
+        const actions = document.createElement("div");
+        actions.className = "flex w-full items-center justify-between px-14 opacity-70";
+        const reply = document.createElement("button");
+        reply.className = "text-ref-muted hover:text-ref-blue";
+        reply.type = "button";
+        reply.innerHTML = '<i class="fa fa-comment" aria-hidden="true"></i><span class="sr-only">Reply</span>'; reply.setAttribute("aria-label", "Reply");
+        reply.addEventListener("click", () => {
+          replyTarget = threadRootId ?? item.id;
+          openPostModal();
+          setStatus(composerStatus, `Replying to ${item.author ?? item.screenname ?? "this post"}.`);
+          if (session) postText?.focus();
+        });
+        actions.append(reply);
+        const like = document.createElement("button");
+        like.className = "text-ref-muted hover:text-ref-blue";
+        like.type = "button";
+        like.innerHTML = `<i class="fa ${item.flLiked ? "fa-heart" : "fa-heart"}" aria-hidden="true"></i> <span>${item.ctLikes ?? 0}</span>`; like.setAttribute("aria-label", `${item.flLiked ? "Unlike" : "Like"} (${item.ctLikes ?? 0})`);
+        like.addEventListener("click", async () => {
+          if (!session) return;
+          const params = new URLSearchParams({emailaddress: session.email, emailcode: session.code, id: String(item.id)});
+          const response = await fetch(`${apiUrl}/togglelike?${params}`, {method: "POST"});
+          if (response.ok) applyItem(await response.json() as Item);
+        });
+        actions.append(like);
+        const editItem = document.createElement("button");
+        editItem.className = "text-ref-muted hover:text-ref-blue disabled:cursor-not-allowed disabled:opacity-40";
+        editItem.type = "button";
+        editItem.innerHTML = '<i class="fas fa-edit" aria-hidden="true"></i><span class="sr-only">Edit</span>';
+        editItem.disabled = session?.screenname !== item.screenname;
+        editItem.title = "Edit this post.";
+        editItem.setAttribute("aria-label", "Edit");
+        editItem.addEventListener("click", () => {
+          editingId = item.id;
+          if (postTitle) postTitle.value = item.title ?? "";
+          if (postText) postText.value = item.markdowntext ?? "";
+          if (publish) publish.textContent = "Save edit";
+          openPostModal();
+          setStatus(composerStatus, `Editing post ${item.id}.`);
+        });
+        actions.append(editItem);
+
+        const deleteItem = document.createElement("button");
+        deleteItem.className = "text-ref-muted hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40";
+        deleteItem.type = "button";
+        deleteItem.innerHTML = '<i class="fas fa-trash" aria-hidden="true"></i><span class="sr-only">Delete</span>';
+        deleteItem.disabled = session?.screenname !== item.screenname;
+        deleteItem.title = "Delete this post.";
+        deleteItem.setAttribute("aria-label", "Delete");
+        deleteItem.addEventListener("click", async () => {
+          if (!session || !confirm("Delete this post?")) return;
+          const params = new URLSearchParams({emailaddress: session.email, emailcode: session.code, id: String(item.id)});
+          const response = await fetch(`${apiUrl}/deletepost?${params}`, {method: "POST"});
+          if (response.ok) applyItem({id: item.id, pubDate: item.pubDate, deleted: true});
+        });
+        actions.append(deleteItem);
+        footer.append(actions);
+        article.append(footer);
+        return article;
+      }
+
+      function appendItem(item: Item, newest = false) {
+        feedItems.set(item.id, item);
+        if (item.inReplyToNum !== undefined || !timeline || renderedIds.has(item.id)) return;
+        renderedIds.add(item.id);
+        const article = renderItem(item);
+        renderedArticles.set(item.id, article);
+        timeline.insertBefore(article, newest ? timeline.firstChild : null);
+      }
+
+      function applyItem(item: Item) {
+        feedItems.set(item.id, item);
+        if (activeThreadId !== undefined && (item.id === activeThreadId || item.inReplyToNum === activeThreadId)) {
+          void openThread(activeThreadId, false);
+        }
+        const current = renderedArticles.get(item.id);
+        if (item.deleted) {
+          current?.remove();
+          renderedArticles.delete(item.id);
+          renderedIds.delete(item.id);
+          return;
+        }
+        if (!current) {
+          appendItem(item, true);
+          return;
+        }
+        const replacement = renderItem(item);
+        renderedArticles.set(item.id, replacement);
+        current.replaceWith(replacement);
+      }
+
+      async function loadFeed() {
+        try {
+          const itemId = new URLSearchParams(location.search).get("id");
+          const endpoint = itemId ? `${apiUrl}/getitembyguid?id=${encodeURIComponent(itemId)}` : `${apiUrl}/getrecentitems?ct=50`;
+          const response = await fetch(endpoint);
+          if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
+          const payload = await response.json() as Item[] | Item;
+          const items = Array.isArray(payload) ? payload : [payload];
+          renderedIds.clear();
+          renderedArticles.clear();
+          feedItems.clear();
+          timeline?.replaceChildren();
+          if (!items.length) {
+            addText(timeline!, "No posts yet. The first voice will make the room.", "rounded-2xl border border-dashed border-line bg-panel p-8 text-sm text-muted");
+          } else {
+            items.forEach((item) => appendItem(item));
+            if (itemId) {
+              const item = items[0];
+              void openThread(item.inReplyToNum ?? item.id);
+            }
+          }
+          if (state) {
+            state.textContent = "Live feed";
+            state.className = "hidden";
+          }
+        } catch (error) {
+          if (timeline) timeline.innerHTML = "";
+          addText(timeline!, error instanceof Error ? error.message : "The feed is unavailable.", "rounded-2xl border border-red-300 bg-red-50 p-6 text-sm text-red-800");
+          if (state) state.textContent = "Offline";
+        }
+      }
+
+      function connectFirehose(attempt = 0) {
+        if (!("WebSocket" in window)) return;
+        const wsOrigin = apiUrl
+          ? apiUrl.replace(/^http/, "ws")
+          : `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`;
+        const socketUrl = `${wsOrigin}/firehose`;
+        const socket = new WebSocket(socketUrl);
+        socket.addEventListener("open", () => setStatus(state, "Live feed"));
+        socket.addEventListener("message", (event) => {
+          if (typeof event.data !== "string") return;
+          const separator = event.data.indexOf("\r");
+          if (separator < 1) return;
+          try {
+            const message = JSON.parse(event.data.slice(separator + 1)) as {item?: Item};
+            if (message.item) applyItem(message.item);
+          } catch {
+            // Ignore malformed firehose messages and keep the feed usable.
+          }
+        });
+        socket.addEventListener("close", () => {
+          setStatus(state, "Polling feed");
+          window.setTimeout(() => connectFirehose(Math.min(attempt + 1, 6)), Math.min(30_000, 1000 * 2 ** attempt));
+        });
+      }
+
+      loadFeed().then(() => connectFirehose());
+    </script>
+  </body>
+</html>
