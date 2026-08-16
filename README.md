@@ -69,4 +69,4 @@ Set `MAIL_WEBHOOK_URL` in the remote Worker for production magic-link email deli
 
 ### Voice posts
 
-![rss.voice voice post](docs/screenshots/voice-post.png)
+![rss.voice voice post with thread view](docs/screenshots/voice-post.png)
