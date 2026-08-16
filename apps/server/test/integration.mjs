@@ -56,11 +56,24 @@ const media = await responseJson(await fetch(`${base}/uploadmedia?${auth}&type=a
 const range = await fetch(media.url, {headers: {range: "bytes=0-10"}});
 if (range.status !== 206 || await range.text() !== "integration") throw new Error("media range response mismatch");
 
+const updatedWithMedia = await responseJson(await fetch(`${base}/updatepost?${auth}`, {
+  method: "POST",
+  body: JSON.stringify({
+    id: parent.id,
+    markdowntext: "integration edited with audio",
+    enclosureUrl: media.url,
+    enclosureType: "audio/mpeg",
+    enclosureLength: media.size,
+  }),
+}));
+if (updatedWithMedia.markdowntext !== "integration edited with audio" || updatedWithMedia.enclosureUrl !== media.url) {
+  throw new Error("update enclosure response mismatch");
+}
 const updated = await responseJson(await fetch(`${base}/updatepost?${auth}`, {
   method: "POST",
   body: JSON.stringify({id: parent.id, markdowntext: "integration edited"}),
 }));
-if (updated.markdowntext !== "integration edited") throw new Error("update response mismatch");
+if (updated.markdowntext !== "integration edited" || updated.enclosureUrl !== media.url) throw new Error("update response mismatch");
 await responseJson(await fetch(`${base}/togglelike?${auth}&id=${parent.id}`, {method: "POST"}));
 await responseJson(await fetch(`${base}/deletepost?${auth}&id=${child.id}`, {method: "POST"}));
 console.log(`integration ok: parent=${parent.id}, media=${media.id}`);

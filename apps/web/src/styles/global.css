@@ -112,6 +112,32 @@ body {
   background: var(--ref-bg);
 }
 
+main {
+  align-content: start;
+}
+
+.new-post-fab {
+  position: fixed;
+  top: 4.25rem;
+  right: max(1rem, calc((100vw - 1180px) / 2 + 1rem));
+  z-index: 20;
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  place-items: center;
+  border-radius: 9999px;
+  background: var(--ref-blue);
+  color: white;
+  font-size: 1.15rem;
+  box-shadow: 0 5px 16px rgb(0 0 0 / 18%);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.new-post-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 22%);
+}
+
 .post-image {
   display: block;
   max-width: 100%;
@@ -122,11 +148,57 @@ body {
 .message-list-mode {
   max-height: 18.75rem;
   overflow: hidden;
-  cursor: pointer;
 }
 
-.message-full-mode {
-  cursor: pointer;
+.thread-shell {
+  position: relative;
+  display: flex;
+  min-height: 0;
+}
+
+.thread-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform 180ms ease, visibility 180ms ease;
+}
+
+.thread-panel.is-open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.thread-reply {
+  border-left: 2px solid var(--ref-line);
+}
+
+.thread-active {
+  box-shadow: inset -3px 0 var(--ref-blue);
+  background: color-mix(in srgb, var(--ref-blue) 5%, var(--ref-bg));
+}
+
+@media (min-width: 1024px) {
+  .thread-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .thread-panel {
+    position: relative;
+    inset: auto;
+    z-index: auto;
+    transform: none;
+    visibility: visible;
+    border-left: 1px solid var(--ref-line);
+  }
+
+  .thread-panel:not(.is-open) {
+    display: none;
+  }
 }
 
 button,

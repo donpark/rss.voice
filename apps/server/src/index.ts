@@ -638,14 +638,28 @@ async function updatePost(request: Request, env: Env): Promise<Response> {
     ? payload.markdowntext
     : typeof payload.description === "string" ? payload.description : current.markdowntext ?? "";
   if (!source.trim() && !current.enclosure_url) return text("The post has no text or media.", "text/plain", 400);
+  const hasNewEnclosure = typeof payload.enclosureUrl === "string";
+  const enclosureUrl = hasNewEnclosure ? payload.enclosureUrl as string : current.enclosure_url;
+  const enclosureType = hasNewEnclosure
+    ? typeof payload.enclosureType === "string" ? payload.enclosureType : null
+    : current.enclosure_type;
+  const enclosureLength = hasNewEnclosure
+    ? payload.enclosureLength === undefined ? null : Number(payload.enclosureLength)
+    : current.enclosure_length;
+  if (hasNewEnclosure && (enclosureLength === null || !enclosureType || !Number.isInteger(enclosureLength) || enclosureLength < 1)) {
+    return text("An enclosure needs a type and byte length.", "text/plain", 400);
+  }
   await env.DB.prepare(`
     UPDATE posts
-    SET title = ?, description = ?, markdowntext = ?, updated_at = ?
+    SET title = ?, description = ?, markdowntext = ?, enclosure_url = ?, enclosure_type = ?, enclosure_length = ?, updated_at = ?
     WHERE tenant_id = ? AND id = ? AND author = ? AND deleted_at IS NULL
   `).bind(
     payload.title === null ? null : typeof payload.title === "string" ? payload.title.slice(0, 500) : current.title,
     source.trim() ? markdownToHtml(source) : null,
     source.trim() ? source : null,
+    enclosureUrl,
+    enclosureType,
+    enclosureLength,
     new Date().toISOString(), env.TENANT_ID, id, account.screenname,
   ).run();
   const updated = await post(env, env.TENANT_ID, id);

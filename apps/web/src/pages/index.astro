@@ -15,7 +15,7 @@ const serverUrl = apiUrl || "";
     <link rel="stylesheet" href="https://s3.amazonaws.com/scripting.com/code/fontawesome/css/all.css" />
   </head>
   <body data-api-url={apiUrl}>
-    <main class="mx-auto grid min-h-screen w-full max-w-[930px] grid-cols-1 bg-ref-bg text-ref-ink md:grid-cols-[140px_minmax(0,750px)]">
+    <main class="mx-auto grid min-h-screen w-full max-w-[1180px] grid-cols-1 bg-ref-bg text-ref-ink">
       <header class="col-span-full flex h-[3.25rem] items-center gap-6 border-b border-ref-line bg-ref-bg px-5 md:px-8">
         <a href="/" class="font-ref-display text-5xl font-black leading-none tracking-[-0.07em] text-ref-strong">rss.voice</a>
         <nav aria-label="Primary" class="flex items-center gap-5 text-sm font-semibold text-ref-muted">
@@ -23,9 +23,11 @@ const serverUrl = apiUrl || "";
           <a class="hover:text-ref-blue" href={`${serverUrl}/data/subs.opml`} aria-label="OPML roster">OPML</a>
         </nav>
         <span id="connection-state" class="hidden">Connecting</span>
-        <button id="theme-selector" class="text-lg text-ref-muted hover:text-ref-blue" type="button" aria-label="Theme: system" title="Theme: system"><i class="fas fa-desktop" aria-hidden="true"></i></button>
+        <button id="settings-trigger" class="text-lg text-ref-muted hover:text-ref-blue" type="button" aria-label="Open settings" title="Settings" aria-expanded="false" aria-controls="settings-modal"><i class="fas fa-cog" aria-hidden="true"></i></button>
         <button id="sign-in-trigger" class="ml-auto text-sm font-semibold text-ref-muted hover:text-ref-blue" type="button" aria-expanded="false" aria-controls="auth-popover"><i class="fa fa-user text-blue-500" aria-hidden="true"></i> Sign in here.</button>
       </header>
+
+      <button id="new-post-trigger" class="new-post-fab" type="button" aria-label="New post" title="New post"><i class="fas fa-plus" aria-hidden="true"></i></button>
 
       <div id="auth-popover" class="fixed right-6 top-16 z-50 hidden w-72 rounded-lg border border-ref-line bg-ref-bg p-4 text-ref-ink shadow-xl" role="dialog" aria-labelledby="auth-popover-title">
         <div class="flex items-start justify-between gap-3">
@@ -46,6 +48,27 @@ const serverUrl = apiUrl || "";
           </div>
         </form>
         <p id="auth-status" class="mt-3 text-xs leading-5 text-muted">Magic-link sign-in.</p>
+      </div>
+
+      <div id="settings-modal" class="fixed inset-0 z-50 hidden items-start justify-end bg-black/20 px-5 pt-16 md:px-8" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <section class="w-full max-w-sm border border-ref-line bg-ref-bg p-5 text-ref-ink shadow-2xl">
+          <header class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Preferences</p>
+              <h2 id="settings-title" class="mt-1 font-display text-xl font-semibold">Settings</h2>
+            </div>
+            <button id="settings-close" class="text-xl leading-none text-ref-muted hover:text-ref-strong" type="button" aria-label="Close settings">×</button>
+          </header>
+          <div class="mt-6">
+            <p class="text-sm font-semibold text-ref-strong">Appearance</p>
+            <div class="mt-3 grid grid-cols-3 gap-2" role="group" aria-label="Theme">
+              <button class="rounded-lg border border-ref-line px-3 py-2 text-sm text-ref-ink hover:border-ref-blue" data-theme-choice="system" type="button">System</button>
+              <button class="rounded-lg border border-ref-line px-3 py-2 text-sm text-ref-ink hover:border-ref-blue" data-theme-choice="light" type="button">Light</button>
+              <button class="rounded-lg border border-ref-line px-3 py-2 text-sm text-ref-ink hover:border-ref-blue" data-theme-choice="dark" type="button">Dark</button>
+            </div>
+          </div>
+          <p class="mt-6 border-t border-ref-line pt-4 text-xs leading-5 text-ref-muted">Feed and profile preferences will live here once server-side preferences are wired.</p>
+        </section>
       </div>
 
       <div id="post-modal" class="fixed inset-0 z-40 hidden items-start justify-center bg-black/20 px-11 pt-7" role="dialog" aria-modal="true" aria-labelledby="post-modal-title">
@@ -90,27 +113,28 @@ const serverUrl = apiUrl || "";
         </div>
       </div>
 
-      <section class="col-start-1 flex min-h-0 flex-col border-x border-ref-line md:col-start-2 md:mt-9" aria-labelledby="timeline-heading">
+      <section class="col-start-1 flex min-h-0 flex-col border-x border-ref-line md:mt-9" aria-labelledby="timeline-heading">
         <header class="sr-only">
           <h1 id="timeline-heading">Everyone</h1>
         </header>
 
-        <div id="timeline" class="flex min-h-0 flex-1 flex-col overflow-y-auto bg-ref-bg" aria-live="polite">
-          <div class="rounded-xl border border-line bg-panel-strong p-6 text-sm text-muted">Loading the feed…</div>
+        <div id="thread-shell" class="thread-shell min-h-0 flex-1">
+          <div id="timeline" class="flex min-h-0 flex-1 flex-col overflow-y-auto bg-ref-bg" aria-live="polite">
+            <div class="rounded-xl border border-line bg-panel-strong p-6 text-sm text-muted">Loading the feed…</div>
+          </div>
+          <aside id="thread-panel" class="thread-panel bg-ref-bg" aria-label="Thread" aria-hidden="true">
+            <header class="flex items-center gap-3 border-b border-ref-line px-4 py-3">
+              <button id="thread-close" class="text-xl leading-none text-ref-muted hover:text-ref-strong" type="button" aria-label="Close thread">×</button>
+              <div class="min-w-0">
+                <p class="text-[0.68rem] font-bold uppercase tracking-[0.18em] text-ref-muted">Thread</p>
+                <h2 id="thread-title" class="truncate text-sm font-semibold text-ref-strong">Select a post</h2>
+              </div>
+            </header>
+            <div id="thread-content" class="min-h-0 flex-1 overflow-y-auto" aria-live="polite"></div>
+          </aside>
         </div>
       </section>
 
-      <aside class="col-start-1 row-start-2 border-0 bg-ref-bg px-5 pb-5 pt-8 text-ref-muted md:col-start-1 md:mt-9">
-        <nav aria-label="Feed navigation" class="space-y-4 text-sm font-semibold">
-          <a class="block text-ref-muted hover:text-ref-blue" href="/"><i class="fa fa-home" aria-hidden="true"></i>&nbsp; Home</a>
-          <a id="new-post-trigger" class="block text-ref-muted hover:text-ref-blue" href="#new-post"><i class="fa fa-plus" aria-hidden="true"></i>&nbsp; New post</a>
-          <a class="block text-ref-muted hover:text-ref-blue" href={`${serverUrl}/users/rss.xml`}><i class="fa fa-rss" aria-hidden="true"></i>&nbsp; Your feed</a>
-          <a class="block text-ref-muted hover:text-ref-blue" href="#theme-selector"><i class="fa fa-code" aria-hidden="true"></i>&nbsp; Your prefs</a>
-        </nav>
-        <div class="mt-8 border-t border-ref-line pt-5"></div>
-
-
-      </aside>
     </main>
 
     <script>
@@ -128,6 +152,7 @@ const serverUrl = apiUrl || "";
         enclosureType?: string;
         enclosureLength?: number;
         inReplyToNum?: number;
+        ctReplies?: number;
         ctLikes?: number;
         flLiked?: boolean;
         deleted?: boolean;
@@ -136,18 +161,40 @@ const serverUrl = apiUrl || "";
       const root = document.documentElement;
       const body = document.body;
       const timeline = document.querySelector<HTMLDivElement>("#timeline");
+      const threadPanel = document.querySelector<HTMLElement>("#thread-panel");
+      const threadContent = document.querySelector<HTMLDivElement>("#thread-content");
+      const threadTitle = document.querySelector<HTMLHeadingElement>("#thread-title");
       const state = document.querySelector<HTMLSpanElement>("#connection-state");
       const apiUrl = body.dataset.apiUrl ?? "";
       const authKey = "rss.voice.auth";
       const authStatus = document.querySelector<HTMLParagraphElement>("#auth-status");
       const postModal = document.querySelector<HTMLDivElement>("#post-modal");
-      const newPostTrigger = document.querySelector<HTMLAnchorElement>("#new-post-trigger");
+      const settingsModal = document.querySelector<HTMLDivElement>("#settings-modal");
+      const settingsTrigger = document.querySelector<HTMLButtonElement>("#settings-trigger");
+      const newPostTrigger = document.querySelector<HTMLButtonElement>("#new-post-trigger");
       const closePostModal = () => postModal?.classList.add("hidden");
-      newPostTrigger?.addEventListener("click", (event) => {
-        event.preventDefault();
+      const openPostModal = () => {
         postModal?.classList.remove("hidden");
         postModal?.classList.add("flex");
         if (session) postText?.focus();
+      };
+      const closeSettings = () => {
+        settingsModal?.classList.add("hidden");
+        settingsTrigger?.setAttribute("aria-expanded", "false");
+      };
+      const openSettings = () => {
+        settingsModal?.classList.remove("hidden");
+        settingsModal?.classList.add("flex");
+        settingsTrigger?.setAttribute("aria-expanded", "true");
+      };
+      newPostTrigger?.addEventListener("click", openPostModal);
+      settingsTrigger?.addEventListener("click", () => {
+        if (settingsModal?.classList.contains("hidden")) openSettings();
+        else closeSettings();
+      });
+      document.querySelector<HTMLButtonElement>("#settings-close")?.addEventListener("click", closeSettings);
+      settingsModal?.addEventListener("click", (event) => {
+        if (event.target === settingsModal) closeSettings();
       });
       document.querySelector<HTMLButtonElement>("#post-modal-close")?.addEventListener("click", closePostModal);
       postModal?.addEventListener("click", (event) => {
@@ -167,6 +214,7 @@ const serverUrl = apiUrl || "";
       document.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
           closeAuthPopover();
+          closeSettings();
           closePostModal();
         }
       });
@@ -196,11 +244,13 @@ const serverUrl = apiUrl || "";
         if (voiceStatus) voiceStatus.textContent = "Up to 4 minutes.";
       });
       let replyTarget: number | undefined;
+      let activeThreadId: number | undefined;
       let editingId: number | undefined;
       let pendingEnclosure: {url: string; type: string; length: number; duration?: number} | undefined;
       let activeRecorder: MediaRecorder | undefined;
       const renderedIds = new Set<number>();
       const renderedArticles = new Map<number, HTMLElement>();
+      const feedItems = new Map<number, Item>();
       let session: {email: string; code: string; screenname: string} | undefined;
       try {
         const saved = JSON.parse(localStorage.getItem(authKey) ?? "null");
@@ -366,6 +416,7 @@ const serverUrl = apiUrl || "";
           publish!.disabled = false;
           return;
         }
+        const threadToOpen = activeThreadId ?? replyTarget;
         if (postTitle) postTitle.value = "";
         postText.value = "";
         if (characterCount) characterCount.textContent = "0 characters";
@@ -378,11 +429,11 @@ const serverUrl = apiUrl || "";
         publish!.disabled = false;
         closePostModal();
         await loadFeed();
+        if (threadToOpen !== undefined) await openThread(threadToOpen, false);
       });
 
       updateComposer();
       const themeKey = "rss.voice.theme";
-      const themeSelector = document.querySelector<HTMLButtonElement>("#theme-selector");
       type ThemeMode = "system" | "dark" | "light";
       let themeMode: ThemeMode = "system";
       const savedTheme = localStorage.getItem(themeKey);
@@ -395,18 +446,14 @@ const serverUrl = apiUrl || "";
         const dark = mode === "dark" || (mode === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
         root.dataset.theme = dark ? "night" : "classic";
         if (persist) localStorage.setItem(themeKey, mode);
-        if (themeSelector) {
-          const icon = mode === "system" ? "fa-desktop" : mode === "dark" ? "fa-moon" : "fa-sun";
-          themeSelector.innerHTML = `<i class="fas ${icon}" aria-hidden="true"></i>`;
-          themeSelector.title = `Theme: ${mode}`;
-          themeSelector.setAttribute("aria-label", `Theme: ${mode}`);
-        }
+        document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach((button) => {
+          const selected = button.dataset.themeChoice === mode;
+          button.setAttribute("aria-pressed", String(selected));
+          button.classList.toggle("border-ref-blue", selected);
+          button.classList.toggle("bg-ref-input", selected);
+        });
       }
       applyTheme(themeMode, false);
-      themeSelector?.addEventListener("click", () => {
-        const next: ThemeMode = themeMode === "system" ? "dark" : themeMode === "dark" ? "light" : "system";
-        applyTheme(next);
-      });
       matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
         if (themeMode === "system") applyTheme("system", false);
       });
@@ -414,8 +461,8 @@ const serverUrl = apiUrl || "";
       document.querySelectorAll<HTMLButtonElement>("[data-theme-choice]").forEach((button) => {
         button.addEventListener("click", () => {
           const theme = button.dataset.themeChoice;
-          if (theme !== "classic" && theme !== "night") return;
-          applyTheme(theme === "night" ? "dark" : "light");
+          if (theme !== "system" && theme !== "dark" && theme !== "light") return;
+          applyTheme(theme);
         });
       });
 
@@ -448,18 +495,73 @@ const serverUrl = apiUrl || "";
         parent.append(element);
       }
 
-      function renderItem(item: Item) {
+      function markActiveMessage(id: number | undefined) {
+        renderedArticles.forEach((article, postId) => article.classList.toggle("thread-active", postId === id));
+      }
+
+      function closeThread() {
+        activeThreadId = undefined;
+        markActiveMessage(undefined);
+        threadPanel?.classList.remove("is-open");
+        threadPanel?.setAttribute("aria-hidden", "true");
+      }
+
+      async function openThread(id: number, toggle = true) {
+        if (toggle && activeThreadId === id && threadPanel?.classList.contains("is-open")) {
+          closeThread();
+          return;
+        }
+        activeThreadId = id;
+        markActiveMessage(id);
+        threadPanel?.classList.add("is-open");
+        threadPanel?.setAttribute("aria-hidden", "false");
+        const root = feedItems.get(id);
+        threadTitle && (threadTitle.textContent = root?.title || `Thread on post ${id}`);
+        threadContent?.replaceChildren();
+        addText(threadContent!, "Loading thread…", "p-5 text-sm text-ref-muted");
+        try {
+          const response = await fetch(`${apiUrl}/getitemandreplies?idparent=${encodeURIComponent(id)}`);
+          if (!response.ok) throw new Error(`Thread request failed (${response.status})`);
+          const items = await response.json() as Item[];
+          if (activeThreadId !== id) return;
+          threadContent?.replaceChildren();
+          if (!items.length) {
+            addText(threadContent!, "This thread is unavailable.", "p-5 text-sm text-ref-muted");
+            return;
+          }
+          items.filter((item) => item.id === id || item.inReplyToNum === id)
+            .forEach((item) => threadContent?.append(renderItem(item, id)));
+        } catch (error) {
+          if (activeThreadId !== id) return;
+          threadContent?.replaceChildren();
+          addText(threadContent!, error instanceof Error ? error.message : "The thread is unavailable.", "p-5 text-sm text-red-700");
+        }
+      }
+
+      document.querySelector<HTMLButtonElement>("#thread-close")?.addEventListener("click", closeThread);
+
+      function renderItem(item: Item, threadRootId?: number) {
         const article = document.createElement("article");
+        const isThread = threadRootId !== undefined;
+        const isReply = isThread && item.id !== threadRootId;
         const mine = session?.screenname === item.screenname;
-        article.className = "group message-list-mode w-full border-b border-ref-line bg-ref-bg px-4 py-3";
-        article.setAttribute("aria-expanded", "false");
-        article.addEventListener("click", (event) => {
-          const target = event.target;
-          if (target instanceof Element && target.closest("button, a, audio")) return;
-          const expanded = article.classList.toggle("message-full-mode");
-          article.classList.toggle("message-list-mode", !expanded);
-          article.setAttribute("aria-expanded", String(expanded));
-        });
+        article.dataset.postId = String(item.id);
+        article.className = `group w-full border-b border-ref-line bg-ref-bg px-4 py-3 ${isThread ? (isReply ? "thread-reply" : "thread-root") : "message-list-mode"}`;
+        if (!isThread) {
+          article.tabIndex = 0;
+          article.setAttribute("aria-label", `Open thread on post ${item.id}`);
+          const selectThread = (event: Event) => {
+            if (event.target instanceof Element && event.target.closest("button, a, audio")) return;
+            void openThread(item.id);
+          };
+          article.addEventListener("click", selectThread);
+          article.addEventListener("keydown", (event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              selectThread(event);
+            }
+          });
+        }
         const identity = document.createElement("div");
         identity.className = "flex items-center gap-2";
         if (item.screenname) {
@@ -508,9 +610,10 @@ const serverUrl = apiUrl || "";
         reply.type = "button";
         reply.innerHTML = '<i class="fa fa-comment" aria-hidden="true"></i><span class="sr-only">Reply</span>'; reply.setAttribute("aria-label", "Reply");
         reply.addEventListener("click", () => {
-          replyTarget = item.id;
+          replyTarget = threadRootId ?? item.id;
+          openPostModal();
           setStatus(composerStatus, `Replying to ${item.author ?? item.screenname ?? "this post"}.`);
-          postText?.focus();
+          if (session) postText?.focus();
         });
         actions.append(reply);
         const like = document.createElement("button");
@@ -524,67 +627,45 @@ const serverUrl = apiUrl || "";
           if (response.ok) applyItem(await response.json() as Item);
         });
         actions.append(like);
-        const permalink = document.createElement("a");
-        permalink.className = "text-ref-muted hover:text-ref-blue";
-        permalink.href = `${location.origin}/?id=${item.id}`;
-        permalink.innerHTML = '<i class="fa fa-code" aria-hidden="true"></i><span class="sr-only">Permalink</span>'; permalink.setAttribute("aria-label", "Permalink");
-        actions.append(permalink);
-
-        const contextMenu = document.createElement("div");
-        contextMenu.className = "relative";
-        const menuButton = document.createElement("button");
-        menuButton.className = "text-ref-muted hover:text-ref-blue";
-        menuButton.type = "button";
-        menuButton.title = "More";
-        menuButton.setAttribute("aria-label", "More");
-        menuButton.setAttribute("aria-expanded", "false");
-        menuButton.innerHTML = '<i class="fas fa-ellipsis-v" aria-hidden="true"></i>';
-        const popup = document.createElement("div");
-        popup.className = "absolute bottom-8 right-0 z-10 hidden min-w-40 border border-ref-line bg-ref-bg py-1 text-left text-sm shadow-lg";
         const editItem = document.createElement("button");
-        editItem.className = "block w-full px-3 py-2 text-left hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-ref-muted";
+        editItem.className = "text-ref-muted hover:text-ref-blue disabled:cursor-not-allowed disabled:opacity-40";
         editItem.type = "button";
-        editItem.textContent = "Edit";
+        editItem.innerHTML = '<i class="fas fa-edit" aria-hidden="true"></i><span class="sr-only">Edit</span>';
         editItem.disabled = session?.screenname !== item.screenname;
-        editItem.title = "Edit the contents of this post.";
+        editItem.title = "Edit this post.";
+        editItem.setAttribute("aria-label", "Edit");
         editItem.addEventListener("click", () => {
           editingId = item.id;
           if (postTitle) postTitle.value = item.title ?? "";
           if (postText) postText.value = item.markdowntext ?? "";
           if (publish) publish.textContent = "Save edit";
+          openPostModal();
           setStatus(composerStatus, `Editing post ${item.id}.`);
-          postText?.focus();
-          popup.classList.add("hidden");
         });
+        actions.append(editItem);
+
         const deleteItem = document.createElement("button");
-        deleteItem.className = "block w-full px-3 py-2 text-left text-red-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-ref-muted";
+        deleteItem.className = "text-ref-muted hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40";
         deleteItem.type = "button";
-        deleteItem.textContent = "Delete";
+        deleteItem.innerHTML = '<i class="fas fa-trash" aria-hidden="true"></i><span class="sr-only">Delete</span>';
         deleteItem.disabled = session?.screenname !== item.screenname;
         deleteItem.title = "Delete this post.";
+        deleteItem.setAttribute("aria-label", "Delete");
         deleteItem.addEventListener("click", async () => {
           if (!session || !confirm("Delete this post?")) return;
           const params = new URLSearchParams({emailaddress: session.email, emailcode: session.code, id: String(item.id)});
           const response = await fetch(`${apiUrl}/deletepost?${params}`, {method: "POST"});
           if (response.ok) applyItem({id: item.id, pubDate: item.pubDate, deleted: true});
-          popup.classList.add("hidden");
         });
-        const divider = document.createElement("div");
-        divider.className = "my-1 border-t border-ref-line";
-        popup.append(editItem, deleteItem, divider);
-        menuButton.addEventListener("click", () => {
-          const open = popup.classList.toggle("hidden");
-          menuButton.setAttribute("aria-expanded", String(!open));
-        });
-        contextMenu.append(menuButton, popup);
-        actions.append(contextMenu);
+        actions.append(deleteItem);
         footer.append(actions);
         article.append(footer);
         return article;
       }
 
       function appendItem(item: Item, newest = false) {
-        if (!timeline || renderedIds.has(item.id)) return;
+        feedItems.set(item.id, item);
+        if (item.inReplyToNum !== undefined || !timeline || renderedIds.has(item.id)) return;
         renderedIds.add(item.id);
         const article = renderItem(item);
         renderedArticles.set(item.id, article);
@@ -592,6 +673,10 @@ const serverUrl = apiUrl || "";
       }
 
       function applyItem(item: Item) {
+        feedItems.set(item.id, item);
+        if (activeThreadId !== undefined && (item.id === activeThreadId || item.inReplyToNum === activeThreadId)) {
+          void openThread(activeThreadId, false);
+        }
         const current = renderedArticles.get(item.id);
         if (item.deleted) {
           current?.remove();
@@ -618,15 +703,16 @@ const serverUrl = apiUrl || "";
           const items = Array.isArray(payload) ? payload : [payload];
           renderedIds.clear();
           renderedArticles.clear();
+          feedItems.clear();
           timeline?.replaceChildren();
-          if (itemId) {
-            const heading = document.querySelector<HTMLHeadingElement>("#timeline-heading");
-            if (heading) heading.textContent = "Post";
-          }
           if (!items.length) {
             addText(timeline!, "No posts yet. The first voice will make the room.", "rounded-2xl border border-dashed border-line bg-panel p-8 text-sm text-muted");
           } else {
             items.forEach((item) => appendItem(item));
+            if (itemId) {
+              const item = items[0];
+              void openThread(item.inReplyToNum ?? item.id);
+            }
           }
           if (state) {
             state.textContent = "Live feed";
@@ -653,10 +739,7 @@ const serverUrl = apiUrl || "";
           if (separator < 1) return;
           try {
             const message = JSON.parse(event.data.slice(separator + 1)) as {item?: Item};
-            if (message.item) {
-              if (event.data.startsWith("updatedItem")) applyItem(message.item);
-              else appendItem(message.item, true);
-            }
+            if (message.item) applyItem(message.item);
           } catch {
             // Ignore malformed firehose messages and keep the feed usable.
           }
