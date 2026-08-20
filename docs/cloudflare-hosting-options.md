@@ -235,7 +235,7 @@ state.acceptWebSocket(server);
 
 Broadcasts enumerate the runtime-managed socket set with `state.getWebSockets()`. This removes the application-owned socket set and allows idle connections to hibernate.
 
-Cloudflare local integration tests cover connection, broadcast, and post delivery. Celld compatibility testing is deferred. The full rss.voice application still requires D1 and scheduler work before it can deploy to celld.
+Cloudflare local integration tests cover connection, broadcast, and post delivery. Celld compatibility testing is deferred until the repository's celld configuration is converted and validated against celld v0.3.0's D1, scheduled-handler, and S3-media surfaces.
 
 ### Hibernation impact
 
@@ -268,16 +268,20 @@ The current celld configuration intentionally omits R2 because celld provides it
 - upload limits
 - authorization rules
 
-### Celld issue to investigate
+### Celld compatibility to verify
 
-The main open question is Durable Object hibernation compatibility. Verify that celld supports:
+celld v0.3.0 provides D1 and runs the scheduled handler, but the repository has not validated the full application against it. Verify:
 
-- hibernatable WebSockets
-- `acceptWebSocket()` or equivalent
-- hibernation event handlers
-- WebSocket tags and connection management
-- Durable Object wake-up after hibernation
-- compatible alarm and migration behavior
+- D1 binding surface (`prepare`/`bind`/`all`/`first`/`run`/`raw`/`exec`, `batch`, `withSession`)
+- scheduled handler on celld's alarm-based cron
+- Durable Object hibernation compatibility:
+  - hibernatable WebSockets
+  - `acceptWebSocket()` or equivalent
+  - hibernation event handlers
+  - WebSocket tags and connection management
+  - Durable Object wake-up after hibernation
+  - compatible alarm and migration behavior
+- S3-compatible media path (R2 is not provided by celld)
 
 If celld does not support hibernation, the current firehose implementation may remain continuously active for connected clients. In that case, either:
 

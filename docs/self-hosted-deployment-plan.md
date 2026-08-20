@@ -59,7 +59,7 @@ and documents deployment through:
 celld deploy apps/server/celld ...
 ```
 
-celld can be installed and operated as a Droplet-local runtime, and its runtime advertises hibernatable WebSocket support. Full rss.voice compatibility testing is deferred: celld 0.2.1 rejects the application's D1 binding and cron trigger configuration, so the full application is not yet deployable there.
+celld can be installed and operated as a Droplet-local runtime, and its runtime advertises hibernatable WebSocket support. Full rss.voice compatibility testing is deferred: celld v0.3.0 provides D1 and runs the scheduled handler, but the repository's celld configuration is still TOML and has not been validated against celld's supported surface, so the full application is not yet deployable there.
 
 Before full self-host deployment, implement or verify:
 
@@ -75,7 +75,7 @@ Before full self-host deployment, implement or verify:
 - backup and restore of local state
 - configuration through environment variables or a file
 
-Use celld's official self-hosted/OCI mode where appropriate. Do not claim the full rss.voice application is celld-compatible until the D1 and scheduler gaps are closed.
+Use celld's official self-hosted/OCI mode where appropriate. Do not claim the full rss.voice application is celld-compatible until the celld configuration is converted and the D1, scheduler, and S3-media surfaces are validated against celld v0.3.0.
 
 ## Deployment layers
 
@@ -578,8 +578,8 @@ The generic VM test is important: it proves the core installer is not accidental
 ### Phase 1: runtime contract
 
 - Confirm celld self-hosting model.
-- Replace or adapt the D1 binding for celld's supported Durable Object/SQLite model.
-- Replace cron-trigger cleanup with Durable Object alarms or an external scheduler.
+- Convert the celld configuration to the JSON/JSONC form celld accepts with a d1_databases binding, and validate the D1-backed storage against celld v0.3.0.
+- Validate the scheduled handler against celld's alarm-based cron support.
 - Define local D1/DO/storage/scheduler contract.
 - Add readiness checks.
 - Document required environment and files.
@@ -777,8 +777,8 @@ A provider-specific skill such as `rss-voice-digitalocean-create` may create a D
 
 ## Open decisions
 
-1. What is the simplest celld-compatible replacement for the current D1 schema and query layer?
-2. Should orphan cleanup use Durable Object alarms or an external host scheduler?
+1. What is the simplest celld-compatible D1 schema and query layer, given celld v0.3.0 provides a D1-compatible binding?
+2. Should orphan cleanup use Durable Object alarms or an external host scheduler, given celld runs the scheduled handler on its own alarms?
 3. Should the frontend run inside the celld service, behind Caddy, or as a separate static service?
 4. Should the first self-host release require a domain, or support an IP-only setup with a later TLS step?
 5. Will updates be manual, opt-in automatic, or controlled by a hosted release service?

@@ -4,13 +4,22 @@
 
 celld is a promising self-hosting runtime for rss.voice, but it is not yet a drop-in deployment target for the current application.
 
-The current application assumes Cloudflare platform services that celld 0.2.1 does not currently accept in the deployment configuration:
+As of celld v0.3.0, the D1 and cron-trigger blockers are addressed: celld provides a D1-compatible interface and runs the Worker `scheduled` handler on its own alarms. The remaining platform gap is Cloudflare R2 application-media binding, which celld does not provide; media must use the separate S3-compatible path.
 
-- D1 binding
-- cron trigger
-- Cloudflare R2 application-media binding
+The shared WebSocket hibernation change should remain runtime-neutral and should not be blocked on celld. Production celld integration is deferred only until the repository's celld configuration is converted and validated against celld v0.3.0.
 
-The shared WebSocket hibernation change should remain runtime-neutral and should not be blocked on celld. Defer production celld integration until the storage and scheduler gaps are designed and implemented.
+## Remaining blockers
+
+The D1 and cron/scheduler blockers are resolved in celld v0.3.0. What still stands between the current application and a celld deployment:
+
+| # | Blocker | Status | What is needed |
+|---|---------|--------|----------------|
+| 1 | R2 application-media binding | Real platform gap | celld does not provide R2 (declared `r2_buckets` bindings load but every method throws). Use the existing S3-compatible media path with a user-owned bucket. |
+| 2 | celld config format | Repo work | `apps/server/celld/wrangler.toml` is TOML; celld needs a supported Wrangler JSON/JSONC subset with a `d1_databases` binding. Convert and validate before deploy. |
+| 3 | Frontend/static assets + ingress | Packaging work | celld does not terminate TLS or manage custom domains, and the repo has a separate Astro frontend. Choose one strategy: bundle assets with the Worker, serve the frontend separately and proxy, or put Caddy/nginx in front. |
+| 4 | Unvalidated DO/hibernation surface | Untested | celld documents the hibernation/DO surface as supported, but the full application has not been run against a real celld instance. Requires a compatibility deployment and end-to-end test before claiming support. |
+
+None of these block at the storage or scheduler level anymore. The path to celld support is: convert the config, validate D1 + scheduled + S3-media on a celld instance, package the frontend behind an ingress, then test end to end.
 
 ## What celld provides
 
@@ -54,29 +63,27 @@ The celld Wrangler project omits the R2 binding intentionally because celld's fl
 
 ### D1
 
-celld 0.2.1 describes D1 as planned. The current app declares a `d1_databases` binding and relies on the `D1Database` API throughout `apps/server/src/index.ts`.
+As of celld v0.3.0, D1 is supported. A D1 database is a cell: it holds one SQLite database that celld replicates to the fleet bucket, so it gets the same fencing, replication, and durable write acknowledgement as a Durable Object.
 
-A celld deployment therefore cannot currently provide the app's `env.DB` contract.
+`d1_databases` bindings provide the D1-compatible surface the app uses:
 
-The likely implementation choices are:
+- `prepare()`, `bind()`, `all()`, `first()`, `run()`, `raw()`, `exec()`
+- `batch()` and `withSession()`
 
-1. Replace the D1 binding with a tenant database Durable Object using SQLite storage.
-2. Add a database service Durable Object and preserve a narrow application repository interface.
-3. Add D1 compatibility to celld before porting rss.voice.
+The current app declares a `d1_databases` binding and relies on the `D1Database` API throughout `apps/server/src/index.ts`, using only `prepare().bind().all()/.run()/.first()` — all within the supported surface. A celld deployment can therefore provide the app's `env.DB` contract.
 
-The first option is the most aligned with celld's architecture, but it changes query routing and transaction boundaries. It should be designed separately from the Firehose work.
+Known D1 differences on celld:
+
+- `dump()` and Time Travel are not available.
+- `wrangler d1` commands and the D1 REST API do not operate against celld; use `celld d1` (for example `celld d1 migrations apply`) instead.
+- One database has one writer; scale with more databases, not a larger one.
+- A query through a binding must hold its full result in memory; celld refuses results over 100,000 rows or 32 MiB.
 
 ### Cron triggers
 
-celld does not support Cloudflare cron triggers or the Worker's `scheduled` handler. The current hourly orphan-media cleanup cannot run unchanged.
+celld v0.3.0 runs the Worker `scheduled` handler on its own alarms, one time for each occurrence in the whole fleet. The current hourly orphan-media cleanup (`scheduled` → `cleanupOrphanMedia`) can therefore run on celld.
 
-Alternatives:
-
-- use a Durable Object alarm
-- run a host-level systemd timer
-- run an external scheduler that calls an authenticated maintenance endpoint
-
-A Durable Object alarm is the most portable runtime-level option. Cleanup must still be made tenant-aware and safe to retry.
+Cleanup must still be made tenant-aware and safe to retry. A Durable Object alarm remains the most portable runtime-level option where a host-level scheduler is preferred.
 
 ### R2 binding
 
@@ -92,9 +99,7 @@ Keep fleet storage and application media in separate buckets or prefixes. Never 
 
 ### Configuration format
 
-celld 0.2.1 requires a supported Wrangler JSON/JSONC configuration subset. The current repository celld configuration is TOML and includes unsupported D1/cron entries.
-
-Converting the file format alone does not make the full application deployable. The binding and scheduler gaps must be resolved first.
+celld requires a supported Wrangler JSON/JSONC configuration subset. The current repository celld configuration is TOML (`apps/server/celld/wrangler.toml`) and includes D1/cron entries. This needs converting to the JSON/JSONC form celld accepts (for example a `d1_databases` binding in JSON) before a celld deploy.
 
 ### Static assets and ingress
 
@@ -117,7 +122,7 @@ state.getWebSockets()
 
 Cloudflare local integration coverage verifies connection and broadcast delivery.
 
-A temporary Firehose-only celld probe was also run during investigation, but it was deliberately removed from the repository. Production celld compatibility remains deferred until the full application has a supported database and scheduler design.
+A temporary Firehose-only celld probe was also run during investigation, but it was deliberately removed from the repository. Production celld compatibility remains deferred until the full application is validated against celld's supported D1, scheduled-handler, and S3-media surfaces.
 
 Do not add celld-specific behavior to the shared Firehose merely to compensate for the current application-level blockers.
 
@@ -155,14 +160,13 @@ It is not currently equivalent to a Cloudflare Worker deployment.
 
 1. Keep the shared Firehose hibernation fix provider-neutral.
 2. Finish Cloudflare managed and independent deployment paths.
-3. Define the database repository boundary in the application.
-4. Prototype a tenant database Durable Object using SQLite storage.
-5. Replace scheduled cleanup with a retry-safe alarm or host scheduler.
-6. Package the Astro frontend and celld runtime behind a TLS ingress.
-7. Create a temporary celld compatibility deployment using R2 fleet storage.
-8. Test text posts, RSS, OPML, media, range reads, cleanup, and Firehose behavior.
-9. Only then advertise celld as a supported self-hosting runtime.
+3. Convert the celld Wrangler configuration to the JSON/JSONC form celld accepts, with a d1_databases binding.
+4. Validate the D1-backed storage and scheduled handler against celld's supported surface.
+5. Package the Astro frontend and celld runtime behind a TLS ingress.
+6. Create a temporary celld compatibility deployment using R2 fleet storage.
+7. Test text posts, RSS, OPML, media, range reads, cleanup, and Firehose behavior.
+8. Only then advertise celld as a supported self-hosting runtime.
 
 ## Decision
 
-Do not make celld a prerequisite for the current release. Keep the hibernation API implementation in the shared Worker code, defer celld-specific testing and storage work, and revisit celld after the D1 and scheduler designs are settled.
+celld hosting is a supported goal to reach when it is ready, not a prerequisite for the current release. Keep the hibernation API implementation in the shared Worker code, and validate celld compatibility now that the D1 and scheduler gaps are addressed in celld v0.3.0.
